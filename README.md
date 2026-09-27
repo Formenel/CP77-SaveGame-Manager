@@ -58,8 +58,9 @@ build.bat
 ```
 
 baut, testet, published (self-contained, single-file, win-x64) und packt ein
-Nexus-fertiges Zip unter `publish\`. Für einen reinen Debug-Build ohne Publish
-reicht `dotnet build`.
+Nexus-fertiges Zip unter `publish\`.
+Verzeichnisse müssen vermutlich angepasst werden.
+Für einen reinen Debug-Build ohne Publish reicht `dotnet build`.
 
 Die Versionsnummer kommt einzig aus `<Version>` in
 `src/Cp77SaveManager.App/Cp77SaveManager.App.csproj`.
