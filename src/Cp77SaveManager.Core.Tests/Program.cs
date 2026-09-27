@@ -1,9 +1,11 @@
 using Cp77SaveManager.Core.Cleanup;
 using Cp77SaveManager.Core.Configuration;
+using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
 using Cp77SaveManager.Core.Retirement;
 using Cp77SaveManager.Core.Scanning;
 using Cp77SaveManager.Core.Storage;
+using System.Text.Json;
 
 // Minimal hand-rolled test harness (no xunit - this sandbox has no network
 // access to NuGet, so no test framework packages can be restored). Each
@@ -236,13 +238,16 @@ var loadedDefault = configService.Load();
 Check("default SaveDir ends with expected CP77 path", loadedDefault.SaveDir.Replace('\\', '/').EndsWith("Saved Games/CD Projekt Red/Cyberpunk 2077"));
 Check("default StorageDir is a sibling named CP77SGM-storage", loadedDefault.StorageDir.Replace('\\', '/').EndsWith("Saved Games/CD Projekt Red/CP77SGM-storage"));
 Check("default cleanup selection is Auto+Manual", loadedDefault.CleanupRule.SelectedTypes.ToHashSet().SetEquals(new[] { SaveType.AutoSave, SaveType.ManualSave }));
+Check("default language is de-DE", loadedDefault.Language == "de-DE");
 
 loadedDefault.Nicknames[ptidA] = "Val the Streetkid";
 loadedDefault.CleanupRule.KeepTotal = 42;
+loadedDefault.Language = "en-GB";
 configService.Save(loadedDefault);
 var reloaded = configService.Load();
 Check("config round-trips nickname", reloaded.Nicknames[ptidA] == "Val the Streetkid");
 Check("config round-trips cleanup rule", reloaded.CleanupRule.KeepTotal == 42);
+Check("config round-trips language", reloaded.Language == "en-GB");
 
 Directory.Delete(tempRoot, recursive: true);
 
@@ -484,6 +489,105 @@ void BackdateSaveFolder(string dir, DateTime to)
     Check("[restore] both saves now coexist live", scanner4.ScanLive(live4).Count(e => e.FolderName.StartsWith("ManualSave-99")) == 2);
 
     Directory.Delete(root4, recursive: true);
+}
+
+// ---------------------------------------------------------------------
+// 13. Localization (Step 3): langs\ scanning, de-DE auto-generation,
+// completion-% and the 3-stage Translator fallback chain.
+// ---------------------------------------------------------------------
+{
+    var langsDir = Path.Combine(Path.GetTempPath(), "cp77sgm-langtest-" + Guid.NewGuid());
+
+    // --- de-DE auto-generation -----------------------------------------
+    var svc = new LocalizationService(langsDir);
+    Check("[i18n] de-DE.json missing before EnsureReferenceFileExists", !File.Exists(Path.Combine(langsDir, "de-DE.json")));
+    svc.EnsureReferenceFileExists();
+    var deDePath = Path.Combine(langsDir, "de-DE.json");
+    Check("[i18n] de-DE.json created", File.Exists(deDePath));
+
+    var generated = JsonSerializer.Deserialize<LanguageFile>(File.ReadAllText(deDePath))!;
+    Check("[i18n] generated de-DE has LANG = Deutsch", generated.Lang == "Deutsch");
+    Check("[i18n] generated de-DE has every LocalizationDefaults key", LocalizationDefaults.Strings.Keys.All(k => generated.Strings.ContainsKey(k)));
+    Check("[i18n] generated de-DE has exactly as many keys as LocalizationDefaults", generated.Strings.Count == LocalizationDefaults.Strings.Count);
+
+    // Human-readability: umlauts/ß must be written as literal UTF-8, not
+    // \uXXXX-escaped - both decode identically, but only one is easy to
+    // hand-edit in a text editor.
+    var rawDeDeText = File.ReadAllText(deDePath);
+    Check("[i18n] generated de-DE.json has literal UTF-8 umlauts, not \\u-escapes", rawDeDeText.Contains("Größe") && !rawDeDeText.Contains("\\u00"));
+
+    // Existing de-DE.json must never be clobbered (a human may have edited it).
+    File.WriteAllText(deDePath, JsonSerializer.Serialize(new LanguageFile { Lang = "Deutsch (angepasst)", Strings = new() { ["X"] = "Y" } }));
+    svc.EnsureReferenceFileExists();
+    var afterSecondCall = JsonSerializer.Deserialize<LanguageFile>(File.ReadAllText(deDePath))!;
+    Check("[i18n] EnsureReferenceFileExists does not overwrite an existing de-DE.json", afterSecondCall.Lang == "Deutsch (angepasst)");
+
+    // Restore a real de-DE.json for the rest of this section.
+    File.WriteAllText(deDePath, JsonSerializer.Serialize(new LanguageFile { Lang = "Deutsch", Strings = new Dictionary<string, string>(LocalizationDefaults.Strings) }));
+
+    // --- scanning: skip invalid files, list valid ones with correct % --
+    File.WriteAllText(Path.Combine(langsDir, "empty.json"), "{}"); // no LANG - must be skipped
+    File.WriteAllText(Path.Combine(langsDir, "broken.json"), "{ this is not valid json"); // must be skipped, not throw
+
+    var allKeys = LocalizationDefaults.Strings.Keys.ToList();
+    var halfKeys = allKeys.Take(allKeys.Count / 2).ToDictionary(k => k, k => "translated");
+    halfKeys["UNKNOWN_KEY_NOT_IN_REFERENCE"] = "ignored either way"; // must not count for or against completion
+    halfKeys[allKeys[0]] = ""; // was "translated" above - overwritten empty, must NOT count as translated anymore
+    File.WriteAllText(Path.Combine(langsDir, "en-GB.json"), JsonSerializer.Serialize(new LanguageFile { Lang = "English", Strings = halfKeys }));
+
+    var scanned = svc.ScanAvailableLanguages();
+    Check("[i18n] scan skips file with no LANG field", scanned.All(l => l.Code != "empty"));
+    Check("[i18n] scan skips unparsable JSON", scanned.All(l => l.Code != "broken"));
+    Check("[i18n] scan finds de-DE at 100%", scanned.Single(l => l.Code == "de-DE").CompletionPercent == 100);
+
+    var enInfo = scanned.Single(l => l.Code == "en-GB");
+    Check("[i18n] scan reports en-GB display name from LANG field", enInfo.DisplayName == "English");
+    // (allKeys.Count/2 - 1) real translations counted / allKeys.Count total - the emptied-out key + the unknown extra key are excluded.
+    var expectedPercent = (int)Math.Round((allKeys.Count / 2 - 1) * 100.0 / allKeys.Count, MidpointRounding.AwayFromZero);
+    Check($"[i18n] en-GB completion is {expectedPercent}% (empty + unknown keys excluded)", enInfo.CompletionPercent == expectedPercent);
+
+    // --- Translator 3-stage fallback ------------------------------------
+    var partial = new Dictionary<string, string> { ["ONLY_IN_SELECTED"] = "selected-value", ["SHARED_KEY"] = "" };
+    var reference = new Dictionary<string, string> { ["SHARED_KEY"] = "reference-value", ["ONLY_IN_REFERENCE"] = "ref-only" };
+    var defaults = new Dictionary<string, string> { ["ONLY_IN_REFERENCE"] = "should-not-be-used", ["ONLY_IN_DEFAULTS"] = "default-value" };
+    var translator = new Translator(partial, reference, defaults);
+
+    Check("[i18n] Translator prefers selected language", translator.Get("ONLY_IN_SELECTED") == "selected-value");
+    Check("[i18n] Translator falls back to reference when selected value is empty", translator.Get("SHARED_KEY") == "reference-value");
+    Check("[i18n] Translator falls back to reference when key missing from selected", translator.Get("ONLY_IN_REFERENCE") == "ref-only");
+    Check("[i18n] Translator falls back to defaults when key missing everywhere else", translator.Get("ONLY_IN_DEFAULTS") == "default-value");
+    Check("[i18n] Translator returns bracketed key when truly unknown", translator.Get("NOWHERE_AT_ALL") == "[NOWHERE_AT_ALL]");
+    Check("[i18n] Translator.Get formats with args", translator.Get("ONLY_IN_SELECTED") + "-" + string.Format("{0}/{1}", 1, 2) == "selected-value-1/2");
+
+    // --- CreateTranslator wiring (selected + reference loaded from disk) -
+    var deTranslator = svc.CreateTranslator("de-DE");
+    Check("[i18n] CreateTranslator(de-DE) resolves a known key", deTranslator.Get("BTN_RELOAD") == "Neu laden");
+
+    var enTranslator = svc.CreateTranslator("en-GB");
+    Check("[i18n] CreateTranslator(en-GB) uses the translated value when present", enTranslator.Get(allKeys[1]) == "translated");
+    Check("[i18n] CreateTranslator(en-GB) falls back to de-DE for the deliberately-empty key", enTranslator.Get(allKeys[0]) == LocalizationDefaults.Strings[allKeys[0]]);
+
+    var missingTranslator = svc.CreateTranslator("does-not-exist");
+    Check("[i18n] CreateTranslator for an unknown code still resolves via de-DE/defaults", missingTranslator.Get("BTN_RELOAD") == "Neu laden");
+
+    // --- key parity: the real shipped en-GB.json must cover every key ---
+    var shippedEnPath = Path.Combine(Directory.GetCurrentDirectory(), "src", "Cp77SaveManager.App", "langs", "en-GB.json");
+    if (File.Exists(shippedEnPath))
+    {
+        var shippedEn = JsonSerializer.Deserialize<LanguageFile>(File.ReadAllText(shippedEnPath))!;
+        var missingInShipped = LocalizationDefaults.Strings.Keys.Where(k => !shippedEn.Strings.ContainsKey(k) || string.IsNullOrEmpty(shippedEn.Strings[k])).ToList();
+        Check("[i18n] shipped langs/en-GB.json has every LocalizationDefaults key translated", missingInShipped.Count == 0);
+        if (missingInShipped.Count > 0)
+        {
+            Console.WriteLine("      missing/empty in en-GB.json: " + string.Join(", ", missingInShipped));
+        }
+    }
+    else
+    {
+        Check("[i18n] shipped langs/en-GB.json exists at src/Cp77SaveManager.App/langs/en-GB.json", false);
+    }
+
+    Directory.Delete(langsDir, recursive: true);
 }
 
 Console.WriteLine();

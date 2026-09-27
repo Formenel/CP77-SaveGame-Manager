@@ -1,3 +1,4 @@
+using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Retirement;
 
 namespace Cp77SaveManager.App;
@@ -7,9 +8,9 @@ internal sealed class RetireDialog : Form
 {
     public RetirementMode? ChosenMode { get; private set; }
 
-    public RetireDialog(string characterLabel, int liveCount, int storedCount)
+    public RetireDialog(Translator t, string characterLabel, int liveCount, int storedCount)
     {
-        Text = "Charakter in Rente schicken";
+        Text = t.Get("DLG_RETIRE_TITLE");
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
@@ -22,13 +23,12 @@ internal sealed class RetireDialog : Form
             Top = 12,
             Width = 396,
             Height = 60,
-            Text = $"\"{characterLabel}\" hat {liveCount} Save(s) live und {storedCount} im Storage.\r\n" +
-                   "Was soll passieren?"
+            Text = t.Get("RETIRE_INFO", characterLabel, liveCount, storedCount)
         };
 
-        var storeButton = new Button { Text = "Alle live Saves einlagern (Storage)", Left = 12, Top = 80, Width = 396, Height = 32 };
-        var deleteButton = new Button { Text = "ALLES löschen (live + Storage) - unwiderruflich", Left = 12, Top = 118, Width = 396, Height = 32 };
-        var cancelButton = new Button { Text = "Abbrechen", Left = 12, Top = 156, Width = 396, DialogResult = DialogResult.Cancel };
+        var storeButton = new Button { Text = t.Get("RETIRE_BTN_STORE_ALL"), Left = 12, Top = 80, Width = 396, Height = 32 };
+        var deleteButton = new Button { Text = t.Get("RETIRE_BTN_DELETE_ALL"), Left = 12, Top = 118, Width = 396, Height = 32 };
+        var cancelButton = new Button { Text = t.Get("BTN_CANCEL"), Left = 12, Top = 156, Width = 396, DialogResult = DialogResult.Cancel };
 
         storeButton.Click += (_, _) =>
         {
@@ -39,8 +39,8 @@ internal sealed class RetireDialog : Form
         {
             var confirm = MessageBox.Show(
                 this,
-                $"Wirklich ALLE {liveCount + storedCount} Save(s) von \"{characterLabel}\" endgültig löschen?\r\nDas kann nicht rückgängig gemacht werden.",
-                "Endgültig löschen?",
+                t.Get("RETIRE_CONFIRM_DELETE_ALL", liveCount + storedCount, characterLabel),
+                t.Get("DLG_RETIRE_CONFIRM_TITLE"),
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
                 MessageBoxDefaultButton.Button2);

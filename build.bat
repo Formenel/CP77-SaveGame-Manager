@@ -32,8 +32,8 @@ rem setzt "0.0.0-beta2", aber die Env-Var "VERSION=beta2" (die Kurzform fuer
 rem den Zip-Namen) hat das beim Restore ueberschrieben - und "beta2" allein
 rem ist kein gueltiger NuGet-Versionsstring, daher der Fehler "beta2 ist keine
 rem gueltige Versionszeichenfolge". Mit CP77_* als Praefix passiert das nicht mehr.
-set CP77_FULL_VERSION=
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "([xml](Get-Content 'src\Cp77SaveManager.App\Cp77SaveManager.App.csproj')).Project.PropertyGroup.Version | Select-Object -First 1"`) do set CP77_FULL_VERSION=%%V
+set "CP77_FULL_VERSION="
+for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "([xml](Get-Content 'src\Cp77SaveManager.App\Cp77SaveManager.App.csproj')).Project.PropertyGroup.Version | Select-Object -First 1"`) do set "CP77_FULL_VERSION=%%V"
 if "%CP77_FULL_VERSION%"=="" (
     echo.
     echo Konnte Version nicht aus Cp77SaveManager.App.csproj lesen - abgebrochen.
@@ -42,8 +42,8 @@ if "%CP77_FULL_VERSION%"=="" (
 
 rem Kurzform fuer Ordner-/Zip-Namen: alles nach dem ersten "-" (z.B. aus
 rem "0.0.0-beta2" wird "beta2"). Ohne "-" im Wert wird die volle Version genommen.
-set CP77_TAG=%CP77_FULL_VERSION%
-for /f "tokens=1,* delims=-" %%A in ("%CP77_FULL_VERSION%") do if not "%%B"=="" set CP77_TAG=%%B
+set "CP77_TAG=%CP77_FULL_VERSION%"
+for /f "tokens=1,* delims=-" %%A in ("%CP77_FULL_VERSION%") do if not "%%B"=="" set "CP77_TAG=%%B"
 
 echo.
 set /p PUBLISH="Alles gruen. Release %CP77_TAG% (Assembly-Version %CP77_FULL_VERSION%) publishen? (j/n) "

@@ -1,4 +1,5 @@
 using Cp77SaveManager.Core.Cleanup;
+using Cp77SaveManager.Core.Localization;
 
 namespace Cp77SaveManager.App;
 
@@ -9,9 +10,9 @@ internal sealed class CleanupPreviewForm : Form
     /// <summary>Items the user left checked when they clicked "Verschieben" - only these get executed.</summary>
     public List<CleanupPlanItem> ConfirmedItems { get; } = new();
 
-    public CleanupPreviewForm(IReadOnlyList<CleanupPlanItem> candidates, int keptCount)
+    public CleanupPreviewForm(Translator t, IReadOnlyList<CleanupPlanItem> candidates, int keptCount)
     {
-        Text = "Ausräumen - Vorschau";
+        Text = t.Get("DLG_CLEANUP_PREVIEW_TITLE");
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -20,8 +21,8 @@ internal sealed class CleanupPreviewForm : Form
         var info = new Label
         {
             Text = candidates.Count == 0
-                ? "Nichts zu tun - alle Saves liegen bereits innerhalb des Limits."
-                : $"{candidates.Count} Save(s) würden ins Storage-Dir verschoben, {keptCount} bleiben live. Häkchen entfernen, um einzelne Saves davon auszunehmen.",
+                ? t.Get("CLEANUP_NOTHING_TO_DO")
+                : t.Get("CLEANUP_PREVIEW_INFO", candidates.Count, keptCount),
             Left = 12,
             Top = 10,
             Width = 616,
@@ -38,10 +39,10 @@ internal sealed class CleanupPreviewForm : Form
             CheckBoxes = true,
             FullRowSelect = true
         };
-        _list.Columns.Add("Typ", 110);
-        _list.Columns.Add("Name", 130);
-        _list.Columns.Add("Zeitpunkt", 140);
-        _list.Columns.Add("Grund", 220);
+        _list.Columns.Add(t.Get("COL_TYPE"), 110);
+        _list.Columns.Add(t.Get("COL_NAME"), 130);
+        _list.Columns.Add(t.Get("COL_TIMESTAMP"), 140);
+        _list.Columns.Add(t.Get("COL_REASON"), 220);
 
         foreach (var item in candidates)
         {
@@ -52,8 +53,8 @@ internal sealed class CleanupPreviewForm : Form
             _list.Items.Add(row);
         }
 
-        var moveButton = new Button { Text = "Verschieben", Left = 396, Top = 375, Width = 110, DialogResult = DialogResult.OK, Enabled = candidates.Count > 0 };
-        var cancelButton = new Button { Text = "Abbrechen", Left = 512, Top = 375, Width = 110, DialogResult = DialogResult.Cancel };
+        var moveButton = new Button { Text = t.Get("BTN_MOVE"), Left = 396, Top = 375, Width = 110, DialogResult = DialogResult.OK, Enabled = candidates.Count > 0 };
+        var cancelButton = new Button { Text = t.Get("BTN_CANCEL"), Left = 512, Top = 375, Width = 110, DialogResult = DialogResult.Cancel };
         AcceptButton = moveButton;
         CancelButton = cancelButton;
         moveButton.Click += (_, _) =>

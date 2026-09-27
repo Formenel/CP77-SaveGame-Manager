@@ -1,5 +1,7 @@
+using System.Reflection;
 using Cp77SaveManager.Core.Cleanup;
 using Cp77SaveManager.Core.Configuration;
+using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
 using Cp77SaveManager.Core.Retirement;
 using Cp77SaveManager.Core.Scanning;
@@ -21,6 +23,12 @@ public sealed class MainForm : Form
     private readonly SaveActionService _actionService = new();
     private readonly SaveListSorter _sorter = new();
 
+    // langs\ lives next to the exe (AppContext.BaseDirectory), not in
+    // %APPDATA% like config.json - it's meant to be hand-editable, so it has
+    // to be somewhere a translator can actually find and open it.
+    private readonly LocalizationService _localizationService = new(Path.Combine(AppContext.BaseDirectory, "langs"));
+    private Translator _t = null!;
+
     private AppConfig _config = new();
     private IReadOnlyList<PlaythroughGroup> _groups = Array.Empty<PlaythroughGroup>();
     private bool _isLoadingList; // guards against re-entrant handlers while we rebuild the list
@@ -36,34 +44,61 @@ public sealed class MainForm : Form
     private readonly SplitContainer _outerSplit;
     private readonly SplitContainer _innerSplit;
 
-    // Fixed column order/labels, kept separately from ColumnHeader.Text so the
-    // sort-direction arrow (appended/stripped in UpdateColumnHeaderArrows) has
-    // a clean base string to always start from.
-    private static readonly string[] _columnBaseNames =
-        { "Typ", "Name", "Level", "Spielzeit", "Zeitpunkt", "Quest", "Größe" };
+    private readonly MenuStrip _menuStrip;
+    private readonly ToolStripMenuItem _toolsMenu;
+    private readonly ToolStripMenuItem _languageMenu;
+
+    private readonly ToolStripButton _reloadButton;
+    private readonly ToolStripButton _settingsButton;
+    private readonly ToolStripButton _cleanupAllButton;
+    private readonly ToolStripMenuItem _renameMenuItem;
+    private readonly ToolStripMenuItem _cleanupOneMenuItem;
+    private readonly ToolStripMenuItem _retireMenuItem;
+    private readonly ToolStripMenuItem _storeMenuItem;
+    private readonly ToolStripMenuItem _restoreMenuItem;
+    private readonly ToolStripMenuItem _deleteMenuItem;
 
     private IReadOnlyCollection<string> ManagedRoots => new[] { _config.SaveDir, _config.StorageDir };
 
     public MainForm()
     {
+        // Config (and with it the selected language) has to be known before
+        // any UI text is built, so it's loaded here rather than only in the
+        // Load-event LoadData() call further down.
+        _config = _configService.Load();
+        _localizationService.EnsureReferenceFileExists();
+        _t = _localizationService.CreateTranslator(_config.Language);
+
         // ProductVersion comes from <Version> in Cp77SaveManager.App.csproj -
         // the one place to bump for a new release; build.bat reads the same
         // value to name the publish folder/zip, so there's nothing to keep in sync.
-        Text = $"CP77 Save Manager ({Application.ProductVersion})";
+        Text = _t.Get("APP_TITLE", Application.ProductVersion);
         MinimumSize = new Size(700, 450);
         StartPosition = FormStartPosition.Manual; // we place it ourselves from config
 
+        using var languageIconStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(
+            $"{typeof(MainForm).Namespace}.language-icon.png");
+        var languageIcon = languageIconStream is not null ? Image.FromStream(languageIconStream) : null;
+
+        _menuStrip = new MenuStrip();
+        _toolsMenu = new ToolStripMenuItem(_t.Get("MENU_TOOLS"));
+        _languageMenu = new ToolStripMenuItem(_t.Get("MENU_LANGUAGE"), languageIcon);
+        _toolsMenu.DropDownItems.Add(_languageMenu);
+        _menuStrip.Items.Add(_toolsMenu);
+        MainMenuStrip = _menuStrip;
+        BuildLanguageMenu();
+
         var toolStrip = new ToolStrip();
-        var reloadButton = new ToolStripButton("Neu laden") { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        reloadButton.Click += (_, _) => LoadData();
-        var settingsButton = new ToolStripButton("Einstellungen...") { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        settingsButton.Click += (_, _) => OpenSettings();
-        var cleanupAllButton = new ToolStripButton("Ausräumen (alle Charaktere)...") { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        cleanupAllButton.Click += (_, _) => RunCleanup(_groups.Where(g => !g.IsUnknown).ToList());
-        toolStrip.Items.AddRange(new ToolStripItem[] { reloadButton, settingsButton, new ToolStripSeparator(), cleanupAllButton });
+        _reloadButton = new ToolStripButton(_t.Get("BTN_RELOAD")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        _reloadButton.Click += (_, _) => LoadData();
+        _settingsButton = new ToolStripButton(_t.Get("BTN_SETTINGS")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        _settingsButton.Click += (_, _) => OpenSettings();
+        _cleanupAllButton = new ToolStripButton(_t.Get("BTN_CLEANUP_ALL")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        _cleanupAllButton.Click += (_, _) => RunCleanup(_groups.Where(g => !g.IsUnknown).ToList());
+        toolStrip.Items.AddRange(new ToolStripItem[] { _reloadButton, _settingsButton, new ToolStripSeparator(), _cleanupAllButton });
 
         _statusStrip = new StatusStrip();
-        _statusLabel = new ToolStripStatusLabel("Bereit.");
+        _statusLabel = new ToolStripStatusLabel(_t.Get("STATUS_READY"));
         _statusStrip.Items.Add(_statusLabel);
 
         // NOTE: SplitterDistance is intentionally NOT set here. A SplitContainer's
@@ -78,16 +113,16 @@ public sealed class MainForm : Form
         _tree.AfterSelect += (_, _) => UpdateListForSelection();
 
         _treeContextMenu = new ContextMenuStrip();
-        var renameItem = new ToolStripMenuItem("Nickname ändern...");
-        renameItem.Click += (_, _) => RenameSelectedCharacter();
-        var cleanupOneItem = new ToolStripMenuItem("Ausräumen für diesen Charakter...");
-        cleanupOneItem.Click += (_, _) =>
+        _renameMenuItem = new ToolStripMenuItem(_t.Get("MENU_RENAME_ITEM"));
+        _renameMenuItem.Click += (_, _) => RenameSelectedCharacter();
+        _cleanupOneMenuItem = new ToolStripMenuItem(_t.Get("MENU_CLEANUP_CHAR_ITEM"));
+        _cleanupOneMenuItem.Click += (_, _) =>
         {
             if (GetSelectedGroup() is { } group) RunCleanup(new[] { group });
         };
-        var retireItem = new ToolStripMenuItem("Charakter in Rente schicken...");
-        retireItem.Click += (_, _) => RetireSelectedCharacter();
-        _treeContextMenu.Items.AddRange(new ToolStripItem[] { renameItem, cleanupOneItem, new ToolStripSeparator(), retireItem });
+        _retireMenuItem = new ToolStripMenuItem(_t.Get("MENU_RETIRE_CHAR_ITEM"));
+        _retireMenuItem.Click += (_, _) => RetireSelectedCharacter();
+        _treeContextMenu.Items.AddRange(new ToolStripItem[] { _renameMenuItem, _cleanupOneMenuItem, new ToolStripSeparator(), _retireMenuItem });
         _tree.NodeMouseClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Right && e.Node.Tag is PlaythroughGroup)
@@ -98,24 +133,28 @@ public sealed class MainForm : Form
         };
 
         _list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = true, ListViewItemSorter = _sorter };
-        _list.Columns.Add(_columnBaseNames[0], 110);
-        _list.Columns.Add(_columnBaseNames[1], 110);
-        _list.Columns.Add(_columnBaseNames[2], 50);
-        _list.Columns.Add(_columnBaseNames[3], 80);
-        _list.Columns.Add(_columnBaseNames[4], 130);
-        _list.Columns.Add(_columnBaseNames[5], 160);
-        _list.Columns.Add(_columnBaseNames[6], 70);
+        foreach (var name in CurrentColumnBaseNames())
+        {
+            _list.Columns.Add(name);
+        }
+        _list.Columns[0].Width = 110;
+        _list.Columns[1].Width = 110;
+        _list.Columns[2].Width = 50;
+        _list.Columns[3].Width = 80;
+        _list.Columns[4].Width = 130;
+        _list.Columns[5].Width = 160;
+        _list.Columns[6].Width = 70;
         _list.SelectedIndexChanged += (_, _) => UpdatePreview();
         _list.ColumnClick += (_, e) => SortByColumn(e.Column);
 
         _listContextMenu = new ContextMenuStrip();
-        var storeItem = new ToolStripMenuItem("Storen (ins Storage-Dir verschieben)");
-        storeItem.Click += (_, _) => StoreSelectedSaves();
-        var restoreItem = new ToolStripMenuItem("Restoren (zurück ins Save-Dir)");
-        restoreItem.Click += (_, _) => RestoreSelectedSaves();
-        var deleteItem = new ToolStripMenuItem("Löschen...");
-        deleteItem.Click += (_, _) => DeleteSelectedSaves();
-        _listContextMenu.Items.AddRange(new ToolStripItem[] { storeItem, restoreItem, deleteItem });
+        _storeMenuItem = new ToolStripMenuItem(_t.Get("MENU_STORE_ITEM"));
+        _storeMenuItem.Click += (_, _) => StoreSelectedSaves();
+        _restoreMenuItem = new ToolStripMenuItem(_t.Get("MENU_RESTORE_ITEM"));
+        _restoreMenuItem.Click += (_, _) => RestoreSelectedSaves();
+        _deleteMenuItem = new ToolStripMenuItem(_t.Get("MENU_DELETE_ITEM"));
+        _deleteMenuItem.Click += (_, _) => DeleteSelectedSaves();
+        _listContextMenu.Items.AddRange(new ToolStripItem[] { _storeMenuItem, _restoreMenuItem, _deleteMenuItem });
         _list.MouseUp += (_, e) =>
         {
             if (e.Button != MouseButtons.Right) return;
@@ -137,8 +176,8 @@ public sealed class MainForm : Form
             }
 
             var selected = GetSelectedSaves();
-            storeItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Live);
-            restoreItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Storage);
+            _storeMenuItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Live);
+            _restoreMenuItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Storage);
             _listContextMenu.Show(_list, e.Location);
         };
 
@@ -162,12 +201,73 @@ public sealed class MainForm : Form
         _outerSplit.Panel2.Controls.Add(_innerSplit);
 
         Controls.Add(_outerSplit);
-        Controls.Add(toolStrip);
         Controls.Add(_statusStrip);
+        Controls.Add(toolStrip);
+        Controls.Add(_menuStrip); // added last among the Top-docked controls so it ends up at the very top
 
         Load += (_, _) => LoadData();
         Shown += (_, _) => ApplyWindowConfigAndSplitters();
         FormClosing += (_, _) => SaveWindowAndListConfig();
+    }
+
+    // -------------------------------------------------------------------
+    // Language
+    // -------------------------------------------------------------------
+
+    private void BuildLanguageMenu()
+    {
+        _languageMenu.DropDownItems.Clear();
+        foreach (var lang in _localizationService.ScanAvailableLanguages())
+        {
+            var item = new ToolStripMenuItem($"{lang.DisplayName} ({lang.Code}, {lang.CompletionPercent}%)")
+            {
+                Checked = lang.Code == _config.Language
+            };
+            item.Click += (_, _) => SwitchLanguage(lang.Code);
+            _languageMenu.DropDownItems.Add(item);
+        }
+    }
+
+    private void SwitchLanguage(string code)
+    {
+        if (code == _config.Language) return;
+
+        _config.Language = code;
+        _t = _localizationService.CreateTranslator(code);
+        _configService.Save(_config);
+
+        RefreshLocalizedText();
+        BuildLanguageMenu();
+        LoadData(); // rebuilds tree/status text, which is otherwise only touched on load/reload
+    }
+
+    /// <summary>
+    /// Re-applies every static piece of UI text in the current language.
+    /// Anything rebuilt from data on every LoadData()/UpdatePreview() call
+    /// (status line, tree labels, preview pane) picks up the new language
+    /// automatically the next time those run - called explicitly right
+    /// after this from SwitchLanguage.
+    /// </summary>
+    private void RefreshLocalizedText()
+    {
+        Text = _t.Get("APP_TITLE", Application.ProductVersion);
+
+        _toolsMenu.Text = _t.Get("MENU_TOOLS");
+        _languageMenu.Text = _t.Get("MENU_LANGUAGE");
+
+        _reloadButton.Text = _t.Get("BTN_RELOAD");
+        _settingsButton.Text = _t.Get("BTN_SETTINGS");
+        _cleanupAllButton.Text = _t.Get("BTN_CLEANUP_ALL");
+
+        _renameMenuItem.Text = _t.Get("MENU_RENAME_ITEM");
+        _cleanupOneMenuItem.Text = _t.Get("MENU_CLEANUP_CHAR_ITEM");
+        _retireMenuItem.Text = _t.Get("MENU_RETIRE_CHAR_ITEM");
+
+        _storeMenuItem.Text = _t.Get("MENU_STORE_ITEM");
+        _restoreMenuItem.Text = _t.Get("MENU_RESTORE_ITEM");
+        _deleteMenuItem.Text = _t.Get("MENU_DELETE_ITEM");
+
+        UpdateColumnHeaderArrows();
     }
 
     // -------------------------------------------------------------------
@@ -267,13 +367,23 @@ public sealed class MainForm : Form
     /// <summary>
     /// Shows which column is currently sorted, and in which direction, with a
     /// plain "▲"/"▼" suffix on the header text - no native Win32 header-control
-    /// sort-arrow message needed (LVM_SETHEADERSORTICON etc.), just text.
+    /// sort-arrow message needed (LVM_SETHEADERSORTICON etc.), just text. Also
+    /// doubles as the one place column headers get their (localized) base text
+    /// re-applied, so a language switch updates them too.
     /// </summary>
+    private string[] CurrentColumnBaseNames() => new[]
+    {
+        _t.Get("COL_TYPE"), _t.Get("COL_NAME"), _t.Get("COL_LEVEL"), _t.Get("COL_PLAYTIME"),
+        _t.Get("COL_TIMESTAMP"), _t.Get("COL_QUEST"), _t.Get("COL_SIZE")
+    };
+
     private void UpdateColumnHeaderArrows()
     {
+        var baseNames = CurrentColumnBaseNames();
+
         for (int i = 0; i < _list.Columns.Count; i++)
         {
-            var baseName = i < _columnBaseNames.Length ? _columnBaseNames[i] : _list.Columns[i].Text;
+            var baseName = i < baseNames.Length ? baseNames[i] : _list.Columns[i].Text;
             _list.Columns[i].Text = i == _sorter.SortColumn
                 ? baseName + (_sorter.Ascending ? " ▲" : " ▼")
                 : baseName;
@@ -295,8 +405,7 @@ public sealed class MainForm : Form
         _groups = PlaythroughGroup.GroupSaves(allSaves, _config.Nicknames);
 
         BuildTree();
-        _statusLabel.Text = $"{liveSaves.Count} live, {storageSaves.Count} im Storage, {_groups.Count} Charakter(e). " +
-                             $"Save-Dir: {_config.SaveDir} | Storage-Dir: {_config.StorageDir}";
+        _statusLabel.Text = _t.Get("STATUS_SUMMARY", liveSaves.Count, storageSaves.Count, _groups.Count, _config.SaveDir, _config.StorageDir);
     }
 
     private void BuildTree()
@@ -308,11 +417,11 @@ public sealed class MainForm : Form
 
         foreach (var group in _groups)
         {
-            var label = group.IsUnknown ? "Unbekannt (keine/defekte Metadaten)" : group.DisplayLabel;
+            var label = group.IsUnknown ? _t.Get("TREE_UNKNOWN_CHARACTER") : group.DisplayLabel;
             var characterNode = new TreeNode(label) { Tag = group };
 
-            var liveNode = new TreeNode($"Live ({group.Live.Count()})") { Tag = (group, SaveLocation.Live) };
-            var storageNode = new TreeNode($"Storage ({group.Stored.Count()})") { Tag = (group, SaveLocation.Storage) };
+            var liveNode = new TreeNode(_t.Get("TREE_LIVE_COUNT", group.Live.Count())) { Tag = (group, SaveLocation.Live) };
+            var storageNode = new TreeNode(_t.Get("TREE_STORAGE_COUNT", group.Stored.Count())) { Tag = (group, SaveLocation.Storage) };
             characterNode.Nodes.Add(liveNode);
             characterNode.Nodes.Add(storageNode);
 
@@ -384,7 +493,7 @@ public sealed class MainForm : Form
             _screenshotBox.Image = null;
             var selectedSaves = GetSelectedSaves();
             var totalBytes = selectedSaves.Sum(s => s.TotalSizeBytes);
-            _metaLabel.Text = $"{selectedSaves.Count} Saves ausgewählt\r\nGesamtgröße: {Formatting.Bytes(totalBytes)}";
+            _metaLabel.Text = _t.Get("PREVIEW_MULTI_SELECTED", selectedSaves.Count, Formatting.Bytes(totalBytes));
             return;
         }
 
@@ -412,37 +521,37 @@ public sealed class MainForm : Form
         }
 
         var m = save.Metadata;
-        var lines = new List<string> { $"Ordner: {save.FolderName}" };
+        var lines = new List<string> { _t.Get("PREVIEW_FOLDER", save.FolderName) };
         if (m is null)
         {
             lines.Add("");
-            lines.Add("Keine Metadaten lesbar (defekt oder fehlend).");
+            lines.Add(_t.Get("PREVIEW_NO_METADATA"));
         }
         else
         {
             lines.AddRange(new[]
             {
-                $"LifePath: {m.LifePath}",
-                $"Geschlecht: {m.BodyGender}",
-                $"Level: {m.Level:0}",
-                $"Street Cred: {m.StreetCred:0}",
-                $"Spielzeit: {Formatting.PlayTime(m.PlayTimeSeconds)}",
-                $"Zeitpunkt: {m.TimestampString}",
-                $"Schwierigkeit: {m.Difficulty}",
-                $"Quest: {m.TrackedQuest}",
-                $"Ort: {m.LocationName}",
-                $"Checkpoint: {m.IsCheckpoint}",
-                $"Modded: {m.IsModded}",
-                $"DLCs: {(m.AdditionalContentIds is null ? "-" : string.Join(", ", m.AdditionalContentIds))}",
-                $"Save-Version: {m.SaveVersion} / Game-Version: {m.GameVersion} ({m.BuildPatch})",
-                $"PlaythroughID: {m.PlaythroughId}",
+                _t.Get("PREVIEW_LIFEPATH", m.LifePath),
+                _t.Get("PREVIEW_GENDER", m.BodyGender),
+                _t.Get("PREVIEW_LEVEL", m.Level?.ToString("0")),
+                _t.Get("PREVIEW_STREETCRED", m.StreetCred?.ToString("0")),
+                _t.Get("PREVIEW_PLAYTIME", Formatting.PlayTime(m.PlayTimeSeconds)),
+                _t.Get("PREVIEW_TIMESTAMP", m.TimestampString),
+                _t.Get("PREVIEW_DIFFICULTY", m.Difficulty),
+                _t.Get("PREVIEW_QUEST", m.TrackedQuest),
+                _t.Get("PREVIEW_LOCATION", m.LocationName),
+                _t.Get("PREVIEW_CHECKPOINT", m.IsCheckpoint),
+                _t.Get("PREVIEW_MODDED", m.IsModded),
+                _t.Get("PREVIEW_DLCS", m.AdditionalContentIds is null ? _t.Get("PREVIEW_DLCS_NONE") : string.Join(", ", m.AdditionalContentIds)),
+                _t.Get("PREVIEW_VERSIONS", m.SaveVersion, m.GameVersion, m.BuildPatch),
+                _t.Get("PREVIEW_PLAYTHROUGH_ID", m.PlaythroughId),
             });
         }
 
-        lines.Add($"Größe: {Formatting.Bytes(save.TotalSizeBytes)}");
+        lines.Add(_t.Get("PREVIEW_SIZE", Formatting.Bytes(save.TotalSizeBytes)));
         if (save.OldFileCount > 0)
         {
-            lines.Add($"⚠ Alte Dateien (*.old): {save.OldFileCount}");
+            lines.Add(_t.Get("PREVIEW_OLD_FILES_WARNING", save.OldFileCount));
         }
 
         _metaLabel.Text = string.Join("\r\n", lines);
@@ -463,7 +572,7 @@ public sealed class MainForm : Form
     {
         if (GetSelectedGroup() is not { } group || group.IsUnknown) return;
 
-        using var dialog = new NicknameDialog("Nickname ändern", group.Nickname ?? "");
+        using var dialog = new NicknameDialog(_t, _t.Get("DLG_RENAME_TITLE"), group.Nickname ?? "");
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         if (string.IsNullOrWhiteSpace(dialog.Value))
@@ -483,20 +592,20 @@ public sealed class MainForm : Form
     {
         if (GetSelectedGroup() is not { } group || group.IsUnknown) return;
 
-        using var dialog = new RetireDialog(group.DisplayLabel, group.Live.Count(), group.Stored.Count());
+        using var dialog = new RetireDialog(_t, group.DisplayLabel, group.Live.Count(), group.Stored.Count());
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.ChosenMode is not { } mode) return;
 
         var result = _actionService.Retire(group, mode, _config.StorageDir, ManagedRoots);
 
-        var verb = mode == RetirementMode.StoreAll ? "eingelagert" : "gelöscht";
-        var message = $"{result.SuccessCount} von {result.Results.Count} Save(s) {verb}.";
+        var verb = mode == RetirementMode.StoreAll ? _t.Get("RETIRE_VERB_STORED") : _t.Get("RETIRE_VERB_DELETED");
+        var message = _t.Get("RESULT_COUNT_VERB", result.SuccessCount, result.Results.Count, verb);
         if (result.FailureCount > 0)
         {
-            message += "\r\n\r\nFehlgeschlagen:\r\n" + string.Join("\r\n",
+            message += "\r\n\r\n" + _t.Get("RESULT_FAILURES_HEADER") + "\r\n" + string.Join("\r\n",
                 result.Results.Where(r => !r.Success).Select(r => $"- {r.Save.FolderName}: {r.Error}"));
         }
 
-        MessageBox.Show(this, message, "Charakter in Rente schicken - Ergebnis",
+        MessageBox.Show(this, message, _t.Get("DLG_RETIRE_RESULT_TITLE"),
             MessageBoxButtons.OK,
             result.FailureCount > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
 
@@ -525,9 +634,10 @@ public sealed class MainForm : Form
 
         if (failures.Count > 0)
         {
-            var message = $"{saves.Count - failures.Count} von {saves.Count} Save(s) erfolgreich gestoret.\r\n\r\nFehlgeschlagen:\r\n" +
+            var message = _t.Get("RESULT_STORE_SUCCESS", saves.Count - failures.Count, saves.Count) +
+                          "\r\n\r\n" + _t.Get("RESULT_FAILURES_HEADER") + "\r\n" +
                           string.Join("\r\n", failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
-            MessageBox.Show(this, message, "Storen - Ergebnis", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, message, _t.Get("DLG_STORE_RESULT_TITLE"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         LoadData();
     }
@@ -556,20 +666,20 @@ public sealed class MainForm : Form
 
         if (failures.Count > 0 || renamed.Count > 0)
         {
-            var lines = new List<string> { $"{saves.Count - failures.Count} von {saves.Count} Save(s) erfolgreich restoret." };
+            var lines = new List<string> { _t.Get("RESULT_RESTORE_SUCCESS", saves.Count - failures.Count, saves.Count) };
             if (renamed.Count > 0)
             {
                 lines.Add("");
-                lines.Add("Im Save-Dir bereits belegt, daher umbenannt:");
+                lines.Add(_t.Get("RESULT_RESTORE_RENAMED_HEADER"));
                 lines.AddRange(renamed.Select(r => $"- \"{r.Save.FolderName}\" -> \"{r.NewName}\""));
             }
             if (failures.Count > 0)
             {
                 lines.Add("");
-                lines.Add("Fehlgeschlagen:");
+                lines.Add(_t.Get("RESULT_FAILURES_HEADER"));
                 lines.AddRange(failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
             }
-            MessageBox.Show(this, string.Join("\r\n", lines), "Restoren - Ergebnis",
+            MessageBox.Show(this, string.Join("\r\n", lines), _t.Get("DLG_RESTORE_RESULT_TITLE"),
                 MessageBoxButtons.OK,
                 failures.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
         }
@@ -582,14 +692,13 @@ public sealed class MainForm : Form
         if (saves.Count == 0) return;
 
         var confirmText = saves.Count == 1
-            ? $"\"{saves[0].FolderName}\" endgültig löschen? Das kann nicht rückgängig gemacht werden."
-            : $"{saves.Count} Saves endgültig löschen? Das kann nicht rückgängig gemacht werden.\r\n\r\n" +
-              string.Join("\r\n", saves.Select(s => $"- {s.FolderName}"));
+            ? _t.Get("CONFIRM_DELETE_SINGLE", saves[0].FolderName)
+            : _t.Get("CONFIRM_DELETE_MULTI", saves.Count, string.Join("\r\n", saves.Select(s => $"- {s.FolderName}")));
 
         var confirm = MessageBox.Show(
             this,
             confirmText,
-            "Löschen?",
+            _t.Get("DLG_DELETE_CONFIRM_TITLE"),
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2);
@@ -604,9 +713,10 @@ public sealed class MainForm : Form
 
         if (failures.Count > 0)
         {
-            var message = $"{saves.Count - failures.Count} von {saves.Count} Save(s) gelöscht.\r\n\r\nFehlgeschlagen:\r\n" +
+            var message = _t.Get("RESULT_DELETE_SUCCESS", saves.Count - failures.Count, saves.Count) +
+                          "\r\n\r\n" + _t.Get("RESULT_FAILURES_HEADER") + "\r\n" +
                           string.Join("\r\n", failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
-            MessageBox.Show(this, message, "Löschen - Ergebnis", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, message, _t.Get("DLG_DELETE_RESULT_TITLE"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         LoadData();
     }
@@ -617,7 +727,7 @@ public sealed class MainForm : Form
 
     private void OpenSettings()
     {
-        using var dialog = new SettingsForm(_config);
+        using var dialog = new SettingsForm(_t, _config);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         // Preserve window/list state already tracked on _config; only the
@@ -641,7 +751,7 @@ public sealed class MainForm : Form
             totalKept += plan.KeptLive.Count;
         }
 
-        using var preview = new CleanupPreviewForm(allCandidates, totalKept);
+        using var preview = new CleanupPreviewForm(_t, allCandidates, totalKept);
         if (preview.ShowDialog(this) != DialogResult.OK || preview.ConfirmedItems.Count == 0)
         {
             return;
@@ -653,14 +763,14 @@ public sealed class MainForm : Form
         var succeeded = results.Count(r => r.MoveResult.Success);
         var failed = results.Where(r => !r.MoveResult.Success).ToList();
 
-        var message = $"{succeeded} von {results.Count} Save(s) erfolgreich ins Storage-Dir verschoben.";
+        var message = _t.Get("RESULT_CLEANUP_SUCCESS", succeeded, results.Count);
         if (failed.Count > 0)
         {
-            message += "\r\n\r\nFehlgeschlagen:\r\n" + string.Join("\r\n",
+            message += "\r\n\r\n" + _t.Get("RESULT_FAILURES_HEADER") + "\r\n" + string.Join("\r\n",
                 failed.Select(f => $"- {f.Item.Save.FolderName}: {f.MoveResult.Error}"));
         }
 
-        MessageBox.Show(this, message, "Ausräumen - Ergebnis",
+        MessageBox.Show(this, message, _t.Get("DLG_CLEANUP_RESULT_TITLE"),
             MessageBoxButtons.OK,
             failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
 

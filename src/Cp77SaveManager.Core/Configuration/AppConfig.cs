@@ -90,6 +90,15 @@ public sealed class AppConfig
 
     [JsonPropertyName("saveList")]
     public SaveListConfig SaveList { get; set; } = new();
+
+    /// <summary>
+    /// Selected UI language: the code of a langs\*.json file (filename
+    /// without extension, e.g. "de-DE" or "en-GB"). Default matches
+    /// LocalizationService.ReferenceCode, which always exists (auto-created
+    /// on first run if missing).
+    /// </summary>
+    [JsonPropertyName("language")]
+    public string Language { get; set; } = Localization.LocalizationService.ReferenceCode;
 }
 
 public static class DefaultPaths

@@ -16,11 +16,27 @@
     <!-- Single source of truth for the version: shown in the title bar
          (Application.ProductVersion, see MainForm.cs) and read by build.bat
          to name the publish folder/zip - bump it here only, nowhere else. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Cp77SaveManager.Core\Cp77SaveManager.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Shipped language files (langs\de-DE.json is auto-generated at runtime
+       if missing - only en-GB.json needs to be a real source file here).
+       CopyToOutputDirectory makes this automatic for both build and publish,
+       so build.bat needs no extra step and the Nexus zip picks it up too. -->
+  <ItemGroup>
+    <None Include="langs\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Embedded (not a loose file) so it's always present regardless of
+       publish mode (single-file, self-contained) - unlike langs\*.json this
+       is never meant to be hand-edited, so there's no reason for it to live
+       beside the exe. -->
+  <ItemGroup>
+    <EmbeddedResource Include="language-icon.png" />
   </ItemGroup>
 
 </Project>
