@@ -55,7 +55,8 @@ if /i not "%PUBLISH%"=="j" (
 rem Zielstruktur entspricht 1:1 dem Cyberpunk-2077-Wurzelverzeichnis, damit
 rem das Zip weiter unten direkt dort hinein entpackt werden kann:
 rem   <Cyberpunk 2077>\tools\CP77-SaveGame-Manager\cp77sgm.exe
-set PUBLISHDIR=publish\tools\CP77-SaveGame-Manager
+set "PUBLISHDIR=publish\tools\CP77-SaveGame-Manager"
+set "CP77_ROOT=D:\SteamLibrary\steamapps\common\Cyberpunk 2077"
 
 echo.
 echo === Publish (Release, self-contained, single-file, Version %CP77_FULL_VERSION%) ===
@@ -68,23 +69,50 @@ if errorlevel 1 (
 )
 
 echo.
-echo === Zip fuer Nexus bauen ===
+echo === Zip fuer Nexus bauen (ohne *.pdb) ===
 rem Kein FOMOD noetig - das ist nur fuer Mods, die Vortex/MO2 in die
 rem Load-Order des Spiels einhaengen. cp77sgm ist ein eigenstaendiges Tool
 rem unter tools\, dafuer reicht ein normales Zip zum manuellen Entpacken
 rem (Nexus-Kategorie "Miscellaneous").
-set ZIPNAME=cp77sgm-%CP77_TAG%.zip
+rem
+rem *.pdb (Debug-Symbole) bleiben in publish\tools\... fuer lokale Zwecke
+rem erhalten, landen aber NICHT im Zip. Compress-Archive kennt keinen
+rem Exclude-Filter, daher erst per robocopy in einen Zwischenordner ohne
+rem *.pdb staged und DER gezippt.
+set "ZIPSTAGE=publish\_zipstage"
+if exist "%ZIPSTAGE%" rmdir /s /q "%ZIPSTAGE%"
+robocopy "%PUBLISHDIR%" "%ZIPSTAGE%\tools\CP77-SaveGame-Manager" /E /XF *.pdb >nul
+rem robocopy-Exitcodes 0-7 sind alle "Erfolg" (Bitflags, was kopiert wurde) -
+rem erst 8+ ist ein echter Fehler, darum explizit darauf pruefen statt "if errorlevel 1".
+if %errorlevel% GEQ 8 (
+    echo.
+    echo ZIP-STAGING FEHLGESCHLAGEN.
+    goto :end
+)
+
+set "ZIPNAME=cp77sgm-%CP77_FULL_VERSION%.zip"
 if exist "publish\%ZIPNAME%" del "publish\%ZIPNAME%"
-powershell -NoProfile -Command "Compress-Archive -Path 'publish\tools' -DestinationPath 'publish\%ZIPNAME%' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path '%ZIPSTAGE%\tools' -DestinationPath 'publish\%ZIPNAME%' -Force"
 if errorlevel 1 (
     echo.
     echo ZIP-ERSTELLUNG FEHLGESCHLAGEN.
     goto :end
 )
+rmdir /s /q "%ZIPSTAGE%"
 
 echo.
+echo === UNZIP in Cyberpunk 2077-ROOT ===
+powershell -NoProfile -Command "Expand-Archive -Path 'publish\%ZIPNAME%' -DestinationPath '%CP77_ROOT%' -Force"
+if errorlevel 1 (
+    echo.
+    echo UNZIP FEHLGESCHLAGEN.
+    goto :end
+)
+
+echo.
+echo ====================================
 echo Fertig: publish\%ZIPNAME%
-echo Einfach in den Cyberpunk-2077-Wurzelordner entpacken -^> landet automatisch unter tools\CP77-SaveGame-Manager\
+echo ====================================
 
 :end
 pause

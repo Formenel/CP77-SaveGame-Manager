@@ -16,7 +16,7 @@
     <!-- Single source of truth for the version: shown in the title bar
          (Application.ProductVersion, see MainForm.cs) and read by build.bat
          to name the publish folder/zip - bump it here only, nowhere else. -->
-    <Version>0.0.0-RC1</Version>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
