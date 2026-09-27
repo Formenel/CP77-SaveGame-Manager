@@ -1,9 +1,15 @@
-# Only track what's actually needed at repo root: src/, publish/, and a
-# handful of root files. Everything else at root (stray images, "Claude
-# outputs" chat-delivery folder, etc.) is intentionally excluded.
+# Only track what's actually needed at repo root: src/ and a handful of
+# root files. Everything else at root (stray images, "Claude outputs"
+# chat-delivery folder, etc.) is intentionally excluded.
+#
+# publish/ is deliberately NOT whitelisted below: it holds the built exe,
+# pdb and distribution zips (self-contained single-file publish, so the
+# exe alone is ~150 MB) - GitHub's hard per-file limit is 100 MB, and it
+# doesn't belong in source-of-truth git history anyway (every build round
+# would add another full-size binary blob). Ship built releases via
+# GitHub Releases or Nexus instead - never commit publish/ again.
 /*
 !/src
-!/publish
 !/README.md
 !/Cp77SaveManager.sln
 !/build.bat
