@@ -322,6 +322,114 @@ Directory.Delete(tempRoot, recursive: true);
     Directory.Delete(root2, recursive: true);
 }
 
+// ---------------------------------------------------------------------
+// 11. Timestamp preservation across a cross-"drive" move (Created,
+//     LastWrite, LastAccess - for both the files AND the folder itself)
+//
+// Split into two blocks on purpose:
+//   11a tests SafeFolderMover directly, with nothing else touching the
+//       source folder between backdating and the move. This is the
+//       real unit test of the preservation logic itself.
+//   11b goes through the actual app path (SaveScanner.ScanLive ->
+//       SaveActionService.StoreSave), i.e. what really happens when
+//       Werner clicks "Storen" after having browsed the list. Listing
+//       a folder's contents is itself an OS-level read that updates
+//       that folder's OWN last-access-time - same as `dir` or Explorer
+//       would. So by the time StoreSave runs, the live folder's access
+//       time already reflects "last time the app scanned it", not
+//       whatever it was before Werner ever opened the app that session.
+//       SafeFolderMover still faithfully carries over whatever it's
+//       given (11a proves that) - there's nothing left to fix here,
+//       this is just what "access time" means on a folder that's
+//       being actively browsed. 11b checks Created/LastWrite (which
+//       scanning does NOT touch) and does not assert equality for the
+//       folder's LastAccessTimeUtc.
+// ---------------------------------------------------------------------
+bool CloseEnough(DateTime a, DateTime b) => Math.Abs((a - b).TotalSeconds) < 5;
+var originalTimestamp = new DateTime(2024, 3, 15, 8, 30, 0, DateTimeKind.Utc);
+
+void BackdateSaveFolder(string dir, DateTime to)
+{
+    foreach (var file in Directory.GetFiles(dir))
+    {
+        File.SetCreationTimeUtc(file, to);
+        File.SetLastWriteTimeUtc(file, to);
+        File.SetLastAccessTimeUtc(file, to);
+    }
+    Directory.SetCreationTimeUtc(dir, to);
+    Directory.SetLastWriteTimeUtc(dir, to);
+    Directory.SetLastAccessTimeUtc(dir, to);
+}
+
+// 11a. SafeFolderMover in isolation - nothing reads the source between
+// backdating and the move, so this is the true test of its own logic.
+{
+    string root3a = Path.Combine(Path.GetTempPath(), "cp77sgm-test3a-" + Guid.NewGuid().ToString("N"));
+    string live3a = Path.Combine(root3a, "live", "Cyberpunk 2077");
+    string storage3a = Path.Combine(root3a, "storage-drive", "CP77SGM-storage");
+    Directory.CreateDirectory(live3a);
+    Directory.CreateDirectory(storage3a);
+
+    const string ptidD = "eeee5555ffff6666";
+    WriteSaveFolder(live3a, "ManualSave-1", BuildMetadataJson(ptidD, "Corpo", "Female", 3, "04:00:00, 27.09.2026", "ManualSave-1"), 5000);
+
+    var saveDir3a = Path.Combine(live3a, "ManualSave-1");
+    BackdateSaveFolder(saveDir3a, originalTimestamp);
+
+    var moverUnit = new SafeFolderMover();
+    var moveResult3a = moverUnit.MoveFolder(saveDir3a, storage3a, "ManualSave-1");
+    Check("[unit] SafeFolderMover: move itself succeeds", moveResult3a.Success);
+
+    var movedFileInfoA = new FileInfo(Path.Combine(moveResult3a.DestinationPath, "sav.dat"));
+    Check("[unit] moved file: CreationTimeUtc preserved (not reset to 'now')", CloseEnough(movedFileInfoA.CreationTimeUtc, originalTimestamp));
+    Check("[unit] moved file: LastWriteTimeUtc preserved", CloseEnough(movedFileInfoA.LastWriteTimeUtc, originalTimestamp));
+    Check("[unit] moved file: LastAccessTimeUtc preserved", CloseEnough(movedFileInfoA.LastAccessTimeUtc, originalTimestamp));
+
+    var movedDirInfoA = new DirectoryInfo(moveResult3a.DestinationPath);
+    Check("[unit] moved folder: CreationTimeUtc preserved", CloseEnough(movedDirInfoA.CreationTimeUtc, originalTimestamp));
+    Check("[unit] moved folder: LastWriteTimeUtc preserved", CloseEnough(movedDirInfoA.LastWriteTimeUtc, originalTimestamp));
+    Check("[unit] moved folder: LastAccessTimeUtc preserved (nothing scanned it first)", CloseEnough(movedDirInfoA.LastAccessTimeUtc, originalTimestamp));
+
+    Directory.Delete(root3a, recursive: true);
+}
+
+// 11b. Real app path: scan (as the UI does to populate the list), then
+// store. Confirms the realistic end-to-end result Werner will actually see.
+{
+    string root3b = Path.Combine(Path.GetTempPath(), "cp77sgm-test3b-" + Guid.NewGuid().ToString("N"));
+    string live3b = Path.Combine(root3b, "live", "Cyberpunk 2077");
+    string storage3b = Path.Combine(root3b, "storage-drive", "CP77SGM-storage");
+    Directory.CreateDirectory(live3b);
+    Directory.CreateDirectory(storage3b);
+
+    const string ptidE = "abcd1234abcd1234";
+    WriteSaveFolder(live3b, "ManualSave-1", BuildMetadataJson(ptidE, "Corpo", "Female", 3, "04:00:00, 27.09.2026", "ManualSave-1"), 5000);
+
+    var saveDir3b = Path.Combine(live3b, "ManualSave-1");
+    BackdateSaveFolder(saveDir3b, originalTimestamp);
+
+    var scanner3 = new SaveScanner();
+    var entryToMove = scanner3.ScanLive(live3b).Single(); // <- this listing already touches saveDir3b's own access time, same as Explorer/dir would
+    var actionService3 = new SaveActionService();
+    var moveResult3b = actionService3.StoreSave(entryToMove, storage3b);
+    Check("[app-path] timestamp test: move itself succeeds", moveResult3b.Success);
+
+    var movedFileInfoB = new FileInfo(Path.Combine(moveResult3b.DestinationPath, "sav.dat"));
+    Check("[app-path] moved file: CreationTimeUtc preserved (not reset to 'now')", CloseEnough(movedFileInfoB.CreationTimeUtc, originalTimestamp));
+    Check("[app-path] moved file: LastWriteTimeUtc preserved", CloseEnough(movedFileInfoB.LastWriteTimeUtc, originalTimestamp));
+    Check("[app-path] moved file: LastAccessTimeUtc preserved", CloseEnough(movedFileInfoB.LastAccessTimeUtc, originalTimestamp));
+
+    var movedDirInfoB = new DirectoryInfo(moveResult3b.DestinationPath);
+    Check("[app-path] moved folder: CreationTimeUtc preserved", CloseEnough(movedDirInfoB.CreationTimeUtc, originalTimestamp));
+    Check("[app-path] moved folder: LastWriteTimeUtc preserved", CloseEnough(movedDirInfoB.LastWriteTimeUtc, originalTimestamp));
+    // Deliberately no LastAccessTimeUtc assertion here: scanning the live
+    // folder to build the list already updated its access time to "now",
+    // before StoreSave (and thus SafeFolderMover) ever got to see it. See
+    // comment above 11a/11b.
+
+    Directory.Delete(root3b, recursive: true);
+}
+
 Console.WriteLine();
 Console.WriteLine(failures.Count == 0
     ? $"ALL CHECKS PASSED"

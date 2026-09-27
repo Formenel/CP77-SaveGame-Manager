@@ -44,6 +44,17 @@ public sealed class WindowConfig
 
     [JsonPropertyName("maximized")]
     public bool Maximized { get; set; }
+
+    /// <summary>
+    /// Pane widths of the two SplitContainers (outer: tree | rest, inner:
+    /// list | preview), in pixels. Null means "not saved yet" - fall back to
+    /// the built-in defaults (260 / 380) rather than an arbitrary 0.
+    /// </summary>
+    [JsonPropertyName("outerSplitterDistance")]
+    public int? OuterSplitterDistance { get; set; }
+
+    [JsonPropertyName("innerSplitterDistance")]
+    public int? InnerSplitterDistance { get; set; }
 }
 
 public sealed class SaveListConfig

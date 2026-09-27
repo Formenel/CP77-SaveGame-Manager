@@ -46,9 +46,20 @@ public sealed class SafeFolderMover
         }
         Directory.CreateDirectory(partialDestDir);
 
+        // Snapshotted BEFORE anything reads the source: enumerating a
+        // directory's contents, and reading a file's bytes for the SHA-256
+        // verify below, both bump that item's own last-access time as a side
+        // effect. Grabbing the values into plain locals up front - rather
+        // than re-querying a FileInfo/DirectoryInfo later, after those reads
+        // already happened - is what actually preserves the original
+        // access time instead of copying our own read's timestamp.
+        var sourceDirTimestamps = TimestampSnapshot.Capture(sourceDir, isDirectory: true);
+        var fileSnapshots = Directory.EnumerateFiles(sourceDir)
+            .ToDictionary(f => f, f => TimestampSnapshot.Capture(f, isDirectory: false));
+
         try
         {
-            foreach (var sourceFile in Directory.EnumerateFiles(sourceDir))
+            foreach (var (sourceFile, snapshot) in fileSnapshots)
             {
                 var fileName = Path.GetFileName(sourceFile);
                 var destFile = Path.Combine(partialDestDir, fileName);
@@ -59,10 +70,19 @@ public sealed class SafeFolderMover
                 {
                     throw new IOException($"Verifikation fehlgeschlagen für Datei: {fileName}");
                 }
+
+                // File.Copy sets the new file's creation time to "now" (only
+                // content + last-write time carry over on Windows) - restore
+                // all three timestamps to match the pre-read original exactly.
+                snapshot.ApplyTo(destFile, isDirectory: false);
             }
 
             // All files verified - promote partial dir to its real name.
             Directory.Move(partialDestDir, destDir);
+
+            // Restore the FOLDER's own timestamps too, last (so nothing after
+            // this touches it again and bumps last-write time back to "now").
+            sourceDirTimestamps.ApplyTo(destDir, isDirectory: true);
 
             // Only now touch the source.
             Directory.Delete(sourceDir, recursive: true);
@@ -92,6 +112,43 @@ public sealed class SafeFolderMover
         using var stream = File.OpenRead(path);
         var hash = SHA256.HashData(stream);
         return Convert.ToHexString(hash);
+    }
+
+    /// <summary>
+    /// A frozen copy of a file or directory's three Windows timestamps
+    /// (Created, Modified, Accessed), taken via the static File/Directory
+    /// Get*TimeUtc calls rather than a FileInfo/DirectoryInfo instance -
+    /// static calls always hit the OS fresh at the moment of the call and
+    /// are never implicitly re-queried later, which is exactly what "freeze
+    /// this before we read the file" requires.
+    /// </summary>
+    private readonly record struct TimestampSnapshot(DateTime CreatedUtc, DateTime LastWriteUtc, DateTime LastAccessUtc)
+    {
+        public static TimestampSnapshot Capture(string path, bool isDirectory) => isDirectory
+            ? new TimestampSnapshot(Directory.GetCreationTimeUtc(path), Directory.GetLastWriteTimeUtc(path), Directory.GetLastAccessTimeUtc(path))
+            : new TimestampSnapshot(File.GetCreationTimeUtc(path), File.GetLastWriteTimeUtc(path), File.GetLastAccessTimeUtc(path));
+
+        /// <summary>
+        /// Best-effort: some filesystems/mount types don't support setting
+        /// creation time (or reject it for a directory) - swallow that
+        /// specific failure rather than turning a successful, verified move
+        /// into an error over a cosmetic timestamp.
+        /// </summary>
+        public void ApplyTo(string path, bool isDirectory)
+        {
+            if (isDirectory)
+            {
+                try { Directory.SetCreationTimeUtc(path, CreatedUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                try { Directory.SetLastWriteTimeUtc(path, LastWriteUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                try { Directory.SetLastAccessTimeUtc(path, LastAccessUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            else
+            {
+                try { File.SetCreationTimeUtc(path, CreatedUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                try { File.SetLastWriteTimeUtc(path, LastWriteUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                try { File.SetLastAccessTimeUtc(path, LastAccessUtc); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
     }
 
     private static void TryDeleteDirectory(string dir)

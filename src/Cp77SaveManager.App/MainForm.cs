@@ -36,6 +36,12 @@ public sealed class MainForm : Form
     private readonly SplitContainer _outerSplit;
     private readonly SplitContainer _innerSplit;
 
+    // Fixed column order/labels, kept separately from ColumnHeader.Text so the
+    // sort-direction arrow (appended/stripped in UpdateColumnHeaderArrows) has
+    // a clean base string to always start from.
+    private static readonly string[] _columnBaseNames =
+        { "Typ", "Name", "Level", "Spielzeit", "Zeitpunkt", "Quest", "Größe" };
+
     private IReadOnlyCollection<string> ManagedRoots => new[] { _config.SaveDir, _config.StorageDir };
 
     public MainForm()
@@ -89,13 +95,13 @@ public sealed class MainForm : Form
         };
 
         _list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, ListViewItemSorter = _sorter };
-        _list.Columns.Add("Typ", 110);
-        _list.Columns.Add("Name", 110);
-        _list.Columns.Add("Level", 50);
-        _list.Columns.Add("Spielzeit", 80);
-        _list.Columns.Add("Zeitpunkt", 130);
-        _list.Columns.Add("Quest", 160);
-        _list.Columns.Add("Größe", 70);
+        _list.Columns.Add(_columnBaseNames[0], 110);
+        _list.Columns.Add(_columnBaseNames[1], 110);
+        _list.Columns.Add(_columnBaseNames[2], 50);
+        _list.Columns.Add(_columnBaseNames[3], 80);
+        _list.Columns.Add(_columnBaseNames[4], 130);
+        _list.Columns.Add(_columnBaseNames[5], 160);
+        _list.Columns.Add(_columnBaseNames[6], 70);
         _list.SelectedIndexChanged += (_, _) => UpdatePreview();
         _list.ColumnClick += (_, e) => SortByColumn(e.Column);
 
@@ -181,8 +187,8 @@ public sealed class MainForm : Form
             WindowState = FormWindowState.Maximized; // maximizes on whichever monitor Bounds/Location falls in
         }
 
-        _outerSplit.SplitterDistance = Math.Clamp(260, _outerSplit.Panel1MinSize, Math.Max(_outerSplit.Panel1MinSize, _outerSplit.Width - _outerSplit.Panel2MinSize));
-        _innerSplit.SplitterDistance = Math.Clamp(380, _innerSplit.Panel1MinSize, Math.Max(_innerSplit.Panel1MinSize, _innerSplit.Width - _innerSplit.Panel2MinSize));
+        _outerSplit.SplitterDistance = Math.Clamp(w.OuterSplitterDistance ?? 260, _outerSplit.Panel1MinSize, Math.Max(_outerSplit.Panel1MinSize, _outerSplit.Width - _outerSplit.Panel2MinSize));
+        _innerSplit.SplitterDistance = Math.Clamp(w.InnerSplitterDistance ?? 380, _innerSplit.Panel1MinSize, Math.Max(_innerSplit.Panel1MinSize, _innerSplit.Width - _innerSplit.Panel2MinSize));
 
         var widths = _config.SaveList.ColumnWidths;
         if (widths is not null && widths.Count == _list.Columns.Count)
@@ -198,6 +204,7 @@ public sealed class MainForm : Form
             _sorter.SortColumn = _config.SaveList.SortColumnIndex;
             _sorter.Ascending = _config.SaveList.SortAscending;
         }
+        UpdateColumnHeaderArrows();
     }
 
     private void SaveWindowAndListConfig()
@@ -213,6 +220,8 @@ public sealed class MainForm : Form
         _config.Window.Width = bounds.Width;
         _config.Window.Height = bounds.Height;
         _config.Window.Maximized = WindowState == FormWindowState.Maximized;
+        _config.Window.OuterSplitterDistance = _outerSplit.SplitterDistance;
+        _config.Window.InnerSplitterDistance = _innerSplit.SplitterDistance;
 
         _config.SaveList.ColumnWidths = _list.Columns.Cast<ColumnHeader>().Select(c => c.Width).ToList();
         _config.SaveList.SortColumnIndex = _sorter.SortColumn;
@@ -233,6 +242,23 @@ public sealed class MainForm : Form
             _sorter.Ascending = true;
         }
         _list.Sort();
+        UpdateColumnHeaderArrows();
+    }
+
+    /// <summary>
+    /// Shows which column is currently sorted, and in which direction, with a
+    /// plain "▲"/"▼" suffix on the header text - no native Win32 header-control
+    /// sort-arrow message needed (LVM_SETHEADERSORTICON etc.), just text.
+    /// </summary>
+    private void UpdateColumnHeaderArrows()
+    {
+        for (int i = 0; i < _list.Columns.Count; i++)
+        {
+            var baseName = i < _columnBaseNames.Length ? _columnBaseNames[i] : _list.Columns[i].Text;
+            _list.Columns[i].Text = i == _sorter.SortColumn
+                ? baseName + (_sorter.Ascending ? " ▲" : " ▼")
+                : baseName;
+        }
     }
 
     // -------------------------------------------------------------------
