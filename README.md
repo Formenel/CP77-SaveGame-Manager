@@ -1,107 +1,95 @@
 # CP77 Save Manager
 
 Windows-Tool zum Verwalten von Cyberpunk-2077-Spielständen: Anzeige nach
-Charakter (Live + Storage) und automatisches Ausräumen alter Saves ins
-Storage-Dir.
+Charakter (Live + Storage), Ein-/Auslagern einzelner oder mehrerer Saves,
+automatisches Ausräumen alter Saves, Charakter komplett archivieren oder
+löschen. Kein Savegame-Editor - es werden keine Werte in den Saves verändert.
+
+## Features
+
+- Scannt das konfigurierte Save-Verzeichnis, gruppiert nach `playthroughID`
+  (= Charakter), mit optionalem Nickname pro Charakter.
+- Zeigt Live- und Storage-Saves getrennt, inkl. Vorschau (Screenshot +
+  Metadaten) pro Save.
+- Storen/Restoren einzelner oder mehrerer Saves (Mehrfachauswahl wie im
+  Explorer üblich).
+- Automatisches Ausräumen: behält konfigurierbar die letzten N Saves pro
+  Charakter (wählbar, welche Save-Typen mitzählen), Rest wandert ins
+  Storage-Dir.
+- "Charakter in Rente schicken": alle Saves eines Charakters auf einmal
+  einlagern oder endgültig löschen.
+- Deutsch/Englisch umschaltbar zur Laufzeit (Menü Extras → Sprache); weitere
+  Sprachen lassen sich durch eine zusätzliche JSON-Datei ergänzen, siehe unten.
+
+## Voraussetzungen
+
+Windows x64. Die exe ist self-contained (bringt ihre eigene .NET-Runtime mit),
+es ist keine separate .NET-Installation nötig.
+
+## Installation
+
+Zip von Nexus/Releases entpacken, `cp77sgm.exe` starten. Kein Installer, kein
+UAC-Prompt nötig - die exe schreibt nie neben sich selbst, Config liegt unter
+`%APPDATA%\cp77sgm\config.json`.
+
+## Konfiguration
+
+Über "Einstellungen..." in der App änderbar:
+
+- Save-Dir (Standard: `%USERPROFILE%\Saved Games\CD Projekt Red\Cyberpunk 2077`)
+- Storage-Dir (Standard: `%USERPROFILE%\Saved Games\CD Projekt Red\CP77SGM-storage`)
+- Ausräumen-Regel: welche Save-Typen mitzählen, wie viele insgesamt behalten
+  werden (Standard: AutoSave + ManualSave, 15 insgesamt)
 
 ## Projektstruktur
 
-- `src/Cp77SaveManager.Core` - reine Logik, keine UI, kein Windows-spezifischer
-  Code: Scanner, Metadata-Parsing, Cleanup-Planung, sicheres Verschieben
-  (Copy → Verify → Delete). Läuft und testet plattformneutral.
-- `src/Cp77SaveManager.Core.Tests` - Test-Harness (kein xUnit, siehe unten
-  warum) mit 37 Checks gegen Fixture-Daten, die exakt das Schema von echten
+- `src/Cp77SaveManager.Core` - Logik ohne UI/Windows-Abhängigkeit: Scanner,
+  Metadata-Parsing, Cleanup-Planung, sicheres Verschieben (Copy → Verify →
+  Delete), Lokalisierung.
+- `src/Cp77SaveManager.Core.Tests` - Testsuite (Hand-Harness statt
+  xUnit/NUnit, siehe unten) gegen Fixture-Daten, die das Schema echter
   `metadata.9.json`-Dateien nachbilden.
-- `src/Cp77SaveManager.App` - die eigentliche `cp77sgm.exe` (WinForms,
-  `net8.0-windows`).
+- `src/Cp77SaveManager.App` - `cp77sgm.exe` (WinForms, `net8.0-windows`).
 
-## Wichtig: Build-Verifikation
+## Bauen
 
-Core + Tests wurden in dieser Sandbox tatsächlich gebaut und ausgeführt
-(`dotnet build`, `dotnet run`) - alle 37 Checks sind grün. Der Code in
-`Cp77SaveManager.App` (WinForms) konnte hier **nicht** kompiliert werden: das
-Windows-Desktop-SDK (`Microsoft.NET.Sdk.WindowsDesktop`) ist auf Linux gar
-nicht installierbar, und der Zugriff auf nuget.org ist in dieser Sandbox von
-der Org-Policy blockiert, sodass auch die Referenzassemblies dafür nicht
-nachgeladen werden konnten. Der WinForms-Code wurde entsprechend sorgfältig
-von Hand geschrieben und durchgesehen, ist aber **noch nicht
-compilerverifiziert**. Bitte als erstes bei dir lokal bauen:
-
-```powershell
-cd Cp77SaveManager
-dotnet build
+```
+build.bat
 ```
 
-Kompilierfehler bei `Cp77SaveManager.App` bitte zurückmelden - das ist der
-einzige Teil, der noch echten Build-Beweis braucht.
+baut, testet, published (self-contained, single-file, win-x64) und packt ein
+Nexus-fertiges Zip unter `publish\`. Für einen reinen Debug-Build ohne Publish
+reicht `dotnet build`.
 
-## Warum kein xUnit in den Tests?
+Die Versionsnummer kommt einzig aus `<Version>` in
+`src/Cp77SaveManager.App/Cp77SaveManager.App.csproj`.
 
-Aus demselben Grund (kein NuGet-Zugriff in der Sandbox): das Test-"Framework"
-ist eine ca. 200-Zeilen-Handrolled-Harness (`Check(name, condition)` +
-Exit-Code). Funktional äquivalent für diesen Zweck, aber wenn du lieber
-xUnit/NUnit hättest, ist das Umschreiben trivial, sobald du lokal NuGet-Zugriff
-hast.
+## Sprachdateien
 
-## Build & Publish (auf deiner Windows-Maschine)
+`langs\*.json`, eine Datei pro Sprache, Dateiname (ohne Endung) ist der
+Sprach-Code (`de-DE`, `en-GB`, ...). Format:
 
-```powershell
-# Debug-Build zum Testen
-dotnet build
-
-# Fertige Single-File-exe (self-contained, keine .NET-Runtime-Installation nötig)
-dotnet publish src/Cp77SaveManager.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+```json
+{
+  "LANG": "Anzeigename im Menü",
+  "STRINGS": { "KEY": "Wert", ... }
+}
 ```
 
-Die exe liegt danach unter `publish\cp77sgm.exe`. Sie kann irgendwo liegen
-(auch außerhalb von Program Files) - es wird nie neben die exe geschrieben,
-Config liegt in `%APPDATA%\cp77sgm\config.json`. Kein UAC-Prompt nötig.
+`de-DE.json` wird beim ersten Start automatisch erzeugt, falls sie fehlt, und
+dient als Referenz: das Sprachmenü zeigt den Übersetzungsgrad jeder anderen
+Datei relativ zu ihren Keys an (z.B. `English (en-GB, 100%)`). Ein fehlender
+Key fällt einzeln auf Deutsch zurück, nie die ganze Datei.
 
-## Konfiguration (Defaults, alles außer dem Config-Pfad änderbar über
-"Einstellungen..." in der App)
+Pull Requests mit weiteren Sprachdateien sind willkommen.
 
-- Save-Dir: `%USERPROFILE%\Saved Games\CD Projekt Red\Cyberpunk 2077`
-- Storage-Dir: `%USERPROFILE%\Saved Games\CD Projekt Red\CP77SGM-storage`
-  (Geschwisterordner, wie bei dir bereits angelegt)
-- Ausräumen-Regel: standardmäßig AutoSave+ManualSave, insgesamt 15 behalten
-  (gemischt gezählt, nicht pro Typ)
+## Warum keine xUnit-Tests?
 
-## Changelog
+Die Testsuite ist eine kleine Hand-Harness (`Check(name, condition)` +
+Exit-Code) statt xUnit/NUnit - funktional ausreichend für den aktuellen
+Umfang, ließe sich aber bei Bedarf problemlos migrieren.
 
-**2026-09-27, zweite Runde (vor Step 2):**
-- Icon (`app.ico`, original/generisch, kein CP77-Branding) eingebaut.
-- "Charakter in Rente schicken" (Rechtsklick auf Charakter im Tree): Alle live Saves einlagern, ODER alles (live+Storage) endgültig löschen (mit Ja/Nein-Bestätigung).
-- Einzelne Saves: Rechtsklick in der Liste → "Storen" (nur bei Live-Saves) oder "Löschen..." (mit Bestätigung), für Live und Storage.
-- Sicherheitsnetz: Löschen geht nur innerhalb der konfigurierten Save-/Storage-Dirs (`SaveActionService.IsUnderAnyRoot`) - auch bei zukünftigen Bugs kann nichts außerhalb gelöscht werden.
-- Vorschau-Pane zeigt jetzt "⚠ Alte Dateien (*.old): N", wenn ein Save ein `sav.old` (oder mehrere) enthält.
-- Save-Liste: Spalten klickbar sortierbar (auf/absteigend), Default weiterhin Zeitpunkt absteigend.
-- Konfig speichert jetzt auch: Fenster-Position/-Größe/-Maximiert-Status (multi-monitor-fähig über normale virtuelle Desktop-Koordinaten, `RestoreBounds` beim Speichern), Spaltenbreiten, aktive Sortierung.
-- Kein Zip fürs Storage-Dir (bewusste Entscheidung - Kompressionstest an echtem `sav.dat` ergab nur ~19% Ersparnis, CP77 komprimiert intern schon selbst).
+## Bekannte Grenzen
 
-## Git
-
-`.gitignore` trackt bewusst nur `src/`, `publish/` und die nötigen Root-Dateien
-(README, .sln, build.bat, .gitignore/.gitattributes selbst) - alles andere im
-Root (Chat-Anhänge, Test-Bilder etc.) ist ausgeschlossen. `bin/`/`obj/` unter
-`src/` sind ignoriert (immer neu generierbar).
-
-**Achtung Repo-Größe:** `publish/cp77sgm.exe` ist ein self-contained
-Single-File-Build und liegt bei ~150 MB (dazu ein paar MB `.pdb`-Dateien). Wenn
-`publish/` mit ins Git-Repo soll (so wie hier angelegt), wächst das Repo bei
-jedem neuen Publish um diesen Betrag, weil git binäre Diffs nicht komprimiert
-speichert - nach ein paar Publishes können das schnell mehrere hundert MB im
-`.git`-Verzeichnis sein. Falls das stört: `publish/` stattdessen ebenfalls
-ignorieren (exe nur lokal/als Release-Artefakt), oder Git LFS für `*.exe`
-einrichten.
-
-`.gitattributes` normalisiert Textdateien auf CRLF (reines Windows-Projekt) und
-markiert exe/dll/pdb/ico/png/jpg explizit als binär.
-
-## Bekannte Grenzen / nächste Schritte (siehe auch Projekt-Plan)
-
-- `sav.dat` wird nicht geparst (proprietäres Binärformat, keine verlässliche
-  öffentliche Doku) - nur `metadata.9.json` wird gelesen.
-- Restore aus dem Storage-Dir zurück ins Live-Save-Dir ist noch nicht gebaut
-  (Step 2, laut Werner).
-- Kein Icon, keine Signierung - SmartScreen wird bei der unsignierten exe
-  wahrscheinlich warnen.
+- `sav.dat` selbst wird nicht geparst (nur `metadata.9.json`) - kein
+  Zugriff auf Inventar, Quests etc., nur die im Save-Menü sichtbaren Daten.
