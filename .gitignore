@@ -1,0 +1,24 @@
+# Only track what's actually needed at repo root: src/, publish/, and a
+# handful of root files. Everything else at root (stray images, "Claude
+# outputs" chat-delivery folder, etc.) is intentionally excluded.
+/*
+!/src
+!/publish
+!/README.md
+!/Cp77SaveManager.sln
+!/build.bat
+!/.gitignore
+!/.gitattributes
+
+# Build artifacts inside src/ - always regenerable, never worth tracking.
+src/**/bin/
+src/**/obj/
+
+# Local NuGet override some dotnet commands drop when there's no network
+# access to nuget.org (see README) - machine-specific, not meant to be shared.
+nuget.config
+
+# Common IDE/editor cruft, in case they ever show up under src/.
+.vs/
+*.user
+*.suo

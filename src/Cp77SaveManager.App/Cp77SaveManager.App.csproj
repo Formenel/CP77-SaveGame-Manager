@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>cp77sgm</AssemblyName>
+    <RootNamespace>Cp77SaveManager.App</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- No admin manifest, no elevated requestedExecutionLevel: this app never
+         writes next to its own exe (config lives in %APPDATA%\cp77sgm), so it
+         never needs UAC regardless of where the exe is placed. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cp77SaveManager.Core\Cp77SaveManager.Core.csproj" />
+  </ItemGroup>
+
+</Project>
