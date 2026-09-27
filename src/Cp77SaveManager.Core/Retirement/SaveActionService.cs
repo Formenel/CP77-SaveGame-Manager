@@ -55,6 +55,27 @@ public sealed class SaveActionService
     }
 
     /// <summary>
+    /// Moves a single save (normally a Storage one) back into the live save
+    /// dir. The live dir is flat (no playthroughID subfolders, unlike
+    /// storage), so the destination parent is simply saveDir itself.
+    ///
+    /// CP77 does not require any particular folder-name pattern for a live
+    /// save - verified by Werner in-game with an arbitrarily-named folder,
+    /// which the game picked up and displayed correctly (the folder name
+    /// shows up as the save's subtitle in the in-game load menu). So the
+    /// original folder name is kept as-is whenever possible; the same
+    /// collision-dedup logic used for storing (append the save's own
+    /// timestamp, ResolveDestinationFolderName) is reused here for the case
+    /// where a live save already occupies that exact name (slot numbers get
+    /// reused across characters over time, so this does happen).
+    /// </summary>
+    public MoveResult RestoreSave(SaveEntry save, string saveDir)
+    {
+        var destName = _pathResolver.ResolveDestinationFolderName(saveDir, save);
+        return _mover.MoveFolder(save.FullPath, saveDir, destName);
+    }
+
+    /// <summary>
     /// Permanently deletes a single save folder. Refuses if the save's path
     /// isn't inside one of the managed roots.
     /// </summary>

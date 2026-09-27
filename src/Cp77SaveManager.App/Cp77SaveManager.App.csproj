@@ -12,6 +12,11 @@
     <!-- No admin manifest, no elevated requestedExecutionLevel: this app never
          writes next to its own exe (config lives in %APPDATA%\cp77sgm), so it
          never needs UAC regardless of where the exe is placed. -->
+
+    <!-- Single source of truth for the version: shown in the title bar
+         (Application.ProductVersion, see MainForm.cs) and read by build.bat
+         to name the publish folder/zip - bump it here only, nowhere else. -->
+    <Version>0.0.0-RC1</Version>
   </PropertyGroup>
 
   <ItemGroup>

@@ -46,7 +46,10 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "CP77 Save Manager";
+        // ProductVersion comes from <Version> in Cp77SaveManager.App.csproj -
+        // the one place to bump for a new release; build.bat reads the same
+        // value to name the publish folder/zip, so there's nothing to keep in sync.
+        Text = $"CP77 Save Manager ({Application.ProductVersion})";
         MinimumSize = new Size(700, 450);
         StartPosition = FormStartPosition.Manual; // we place it ourselves from config
 
@@ -94,7 +97,7 @@ public sealed class MainForm : Form
             }
         };
 
-        _list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, ListViewItemSorter = _sorter };
+        _list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = true, ListViewItemSorter = _sorter };
         _list.Columns.Add(_columnBaseNames[0], 110);
         _list.Columns.Add(_columnBaseNames[1], 110);
         _list.Columns.Add(_columnBaseNames[2], 50);
@@ -107,19 +110,35 @@ public sealed class MainForm : Form
 
         _listContextMenu = new ContextMenuStrip();
         var storeItem = new ToolStripMenuItem("Storen (ins Storage-Dir verschieben)");
-        storeItem.Click += (_, _) => StoreSelectedSave();
+        storeItem.Click += (_, _) => StoreSelectedSaves();
+        var restoreItem = new ToolStripMenuItem("Restoren (zurück ins Save-Dir)");
+        restoreItem.Click += (_, _) => RestoreSelectedSaves();
         var deleteItem = new ToolStripMenuItem("Löschen...");
-        deleteItem.Click += (_, _) => DeleteSelectedSave();
-        _listContextMenu.Items.AddRange(new ToolStripItem[] { storeItem, deleteItem });
+        deleteItem.Click += (_, _) => DeleteSelectedSaves();
+        _listContextMenu.Items.AddRange(new ToolStripItem[] { storeItem, restoreItem, deleteItem });
         _list.MouseUp += (_, e) =>
         {
             if (e.Button != MouseButtons.Right) return;
             var hit = _list.GetItemAt(e.X, e.Y);
             if (hit is null) return;
-            hit.Selected = true;
 
-            var save = (SaveEntry)hit.Tag!;
-            storeItem.Enabled = save.Location == SaveLocation.Live;
+            // OS-standard behaviour: right-clicking an item that's already
+            // part of the current multi-selection keeps the whole selection
+            // (so "Storen"/"Löschen" apply to all of it); right-clicking
+            // outside it collapses to just the clicked item, same as
+            // Windows Explorer.
+            if (!hit.Selected)
+            {
+                foreach (ListViewItem item in _list.SelectedItems.Cast<ListViewItem>().ToList())
+                {
+                    item.Selected = false;
+                }
+                hit.Selected = true;
+            }
+
+            var selected = GetSelectedSaves();
+            storeItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Live);
+            restoreItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Storage);
             _listContextMenu.Show(_list, e.Location);
         };
 
@@ -355,6 +374,20 @@ public sealed class MainForm : Form
     {
         if (_isLoadingList) return;
 
+        if (_list.SelectedItems.Count > 1)
+        {
+            // Multi-selection: the detail pane only ever shows one save's
+            // metadata/screenshot, so for >1 just say how many are selected
+            // and how big they are together - still useful at a glance,
+            // without pretending to show details for a single one of them.
+            _screenshotBox.Image?.Dispose();
+            _screenshotBox.Image = null;
+            var selectedSaves = GetSelectedSaves();
+            var totalBytes = selectedSaves.Sum(s => s.TotalSizeBytes);
+            _metaLabel.Text = $"{selectedSaves.Count} Saves ausgewählt\r\nGesamtgröße: {Formatting.Bytes(totalBytes)}";
+            return;
+        }
+
         if (_list.SelectedItems.Count == 0 || _list.SelectedItems[0].Tag is not SaveEntry save)
         {
             _screenshotBox.Image = null;
@@ -471,41 +504,109 @@ public sealed class MainForm : Form
     }
 
     // -------------------------------------------------------------------
-    // Single-save actions
+    // Save actions (Store/Restore/Delete) - operate on the whole current
+    // multi-selection, same as an OS file manager would.
     // -------------------------------------------------------------------
 
-    private SaveEntry? GetSelectedSave() =>
-        _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as SaveEntry : null;
+    private IReadOnlyList<SaveEntry> GetSelectedSaves() =>
+        _list.SelectedItems.Cast<ListViewItem>().Select(i => (SaveEntry)i.Tag!).ToList();
 
-    private void StoreSelectedSave()
+    private void StoreSelectedSaves()
     {
-        if (GetSelectedSave() is not { } save || save.Location != SaveLocation.Live) return;
+        var saves = GetSelectedSaves().Where(s => s.Location == SaveLocation.Live).ToList();
+        if (saves.Count == 0) return;
 
-        var result = _actionService.StoreSave(save, _config.StorageDir);
-        if (!result.Success)
+        var failures = new List<(SaveEntry Save, string? Error)>();
+        foreach (var save in saves)
         {
-            MessageBox.Show(this, $"Storen fehlgeschlagen: {result.Error}", "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            var result = _actionService.StoreSave(save, _config.StorageDir);
+            if (!result.Success) failures.Add((save, result.Error));
+        }
+
+        if (failures.Count > 0)
+        {
+            var message = $"{saves.Count - failures.Count} von {saves.Count} Save(s) erfolgreich gestoret.\r\n\r\nFehlgeschlagen:\r\n" +
+                          string.Join("\r\n", failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
+            MessageBox.Show(this, message, "Storen - Ergebnis", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         LoadData();
     }
 
-    private void DeleteSelectedSave()
+    private void RestoreSelectedSaves()
     {
-        if (GetSelectedSave() is not { } save) return;
+        var saves = GetSelectedSaves().Where(s => s.Location == SaveLocation.Storage).ToList();
+        if (saves.Count == 0) return;
+
+        var failures = new List<(SaveEntry Save, string? Error)>();
+        var renamed = new List<(SaveEntry Save, string NewName)>();
+        foreach (var save in saves)
+        {
+            var result = _actionService.RestoreSave(save, _config.SaveDir);
+            if (!result.Success)
+            {
+                failures.Add((save, result.Error));
+            }
+            else if (Path.GetFileName(result.DestinationPath) != save.FolderName)
+            {
+                // Live slot-name collision - original name was already taken
+                // by a different save, so it landed under a deduped name.
+                renamed.Add((save, Path.GetFileName(result.DestinationPath)));
+            }
+        }
+
+        if (failures.Count > 0 || renamed.Count > 0)
+        {
+            var lines = new List<string> { $"{saves.Count - failures.Count} von {saves.Count} Save(s) erfolgreich restoret." };
+            if (renamed.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("Im Save-Dir bereits belegt, daher umbenannt:");
+                lines.AddRange(renamed.Select(r => $"- \"{r.Save.FolderName}\" -> \"{r.NewName}\""));
+            }
+            if (failures.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("Fehlgeschlagen:");
+                lines.AddRange(failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
+            }
+            MessageBox.Show(this, string.Join("\r\n", lines), "Restoren - Ergebnis",
+                MessageBoxButtons.OK,
+                failures.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+        }
+        LoadData();
+    }
+
+    private void DeleteSelectedSaves()
+    {
+        var saves = GetSelectedSaves();
+        if (saves.Count == 0) return;
+
+        var confirmText = saves.Count == 1
+            ? $"\"{saves[0].FolderName}\" endgültig löschen? Das kann nicht rückgängig gemacht werden."
+            : $"{saves.Count} Saves endgültig löschen? Das kann nicht rückgängig gemacht werden.\r\n\r\n" +
+              string.Join("\r\n", saves.Select(s => $"- {s.FolderName}"));
 
         var confirm = MessageBox.Show(
             this,
-            $"\"{save.FolderName}\" endgültig löschen? Das kann nicht rückgängig gemacht werden.",
+            confirmText,
             "Löschen?",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2);
         if (confirm != DialogResult.Yes) return;
 
-        var result = _actionService.DeleteSave(save, ManagedRoots);
-        if (!result.Success)
+        var failures = new List<(SaveEntry Save, string? Error)>();
+        foreach (var save in saves)
         {
-            MessageBox.Show(this, $"Löschen fehlgeschlagen: {result.Error}", "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            var result = _actionService.DeleteSave(save, ManagedRoots);
+            if (!result.Success) failures.Add((save, result.Error));
+        }
+
+        if (failures.Count > 0)
+        {
+            var message = $"{saves.Count - failures.Count} von {saves.Count} Save(s) gelöscht.\r\n\r\nFehlgeschlagen:\r\n" +
+                          string.Join("\r\n", failures.Select(f => $"- {f.Save.FolderName}: {f.Error}"));
+            MessageBox.Show(this, message, "Löschen - Ergebnis", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         LoadData();
     }

@@ -430,6 +430,62 @@ void BackdateSaveFolder(string dir, DateTime to)
     Directory.Delete(root3b, recursive: true);
 }
 
+// ---------------------------------------------------------------------
+// 12. RestoreSave: Storage -> Live (Step 2). Live dir is flat (no PTID
+// subfolders), and the original folder name is kept as-is - confirmed in
+// Werner's own game that CP77 accepts any folder name for a live save, so
+// there's no "find a free ManualSave-N slot" logic needed. Only real case to
+// handle: a live save with that exact folder name already exists (slot
+// numbers get reused across characters over time) - same dedup logic as
+// StoreSave (StoragePathResolver.ResolveDestinationFolderName), reused here.
+// ---------------------------------------------------------------------
+{
+    string root4 = Path.Combine(Path.GetTempPath(), "cp77sgm-test4-" + Guid.NewGuid().ToString("N"));
+    string live4 = Path.Combine(root4, "live", "Cyberpunk 2077");
+    string storage4 = Path.Combine(root4, "storage-drive", "CP77SGM-storage");
+    Directory.CreateDirectory(live4);
+    Directory.CreateDirectory(storage4);
+
+    const string ptidF = "1111aaaa2222bbbb";
+
+    // Plain case: nothing live with that name - restore keeps the original name.
+    WriteSaveFolder(live4, "ManualSave-7", BuildMetadataJson(ptidF, "Corpo", "Male", 10, "05:00:00, 27.09.2026", "ManualSave-7"), 5000);
+    var scanner4 = new SaveScanner();
+    var actionService4 = new SaveActionService();
+    var toStore = scanner4.ScanLive(live4).Single();
+    var storeForRestoreTest = actionService4.StoreSave(toStore, storage4);
+    Check("[restore] setup: store before restore succeeds", storeForRestoreTest.Success);
+
+    var storedEntry = scanner4.ScanStorage(storage4).Single();
+    var restoreResult = actionService4.RestoreSave(storedEntry, live4);
+    Check("[restore] plain restore succeeds", restoreResult.Success);
+    Check("[restore] restored folder keeps original name", restoreResult.DestinationPath == Path.Combine(live4, "ManualSave-7"));
+    Check("[restore] source no longer in storage", !Directory.Exists(storedEntry.FullPath));
+    Check("[restore] restored save shows up live again", scanner4.ScanLive(live4).Any(e => e.FolderName == "ManualSave-7"));
+
+    // Collision case: a DIFFERENT save (different metadata) already occupies
+    // the exact folder name "ManualSave-7" live (slot reuse) - restore must
+    // not overwrite it, and must dedupe instead of failing.
+    WriteSaveFolder(live4, "ManualSave-99", BuildMetadataJson(ptidF, "Corpo", "Male", 11, "06:00:00, 27.09.2026", "ManualSave-99"), 5000);
+    var secondToStore = scanner4.ScanLive(live4).Single(e => e.FolderName == "ManualSave-99");
+    actionService4.StoreSave(secondToStore, storage4); // now in storage as "ManualSave-99"
+
+    // Simulate slot reuse: the live game later creates a NEW, different save
+    // that happens to reuse the name "ManualSave-99" again.
+    WriteSaveFolder(live4, "ManualSave-99", BuildMetadataJson(ptidF, "Corpo", "Male", 15, "07:00:00, 27.09.2026", "ManualSave-99"), 6000);
+    var collidingLiveSave = scanner4.ScanLive(live4).Single(e => e.FolderName == "ManualSave-99");
+
+    var storedNinetyNine = scanner4.ScanStorage(storage4).Single(e => e.FolderName == "ManualSave-99");
+    var restoreCollisionResult = actionService4.RestoreSave(storedNinetyNine, live4);
+    Check("[restore] collision restore still succeeds", restoreCollisionResult.Success);
+    Check("[restore] collision restore does NOT overwrite the current live save", restoreCollisionResult.DestinationPath != collidingLiveSave.FullPath);
+    Check("[restore] collision restore lands under a deduped name", restoreCollisionResult.DestinationPath.Contains("ManualSave-99__"));
+    Check("[restore] the live save that was already there is untouched", Directory.Exists(collidingLiveSave.FullPath));
+    Check("[restore] both saves now coexist live", scanner4.ScanLive(live4).Count(e => e.FolderName.StartsWith("ManualSave-99")) == 2);
+
+    Directory.Delete(root4, recursive: true);
+}
+
 Console.WriteLine();
 Console.WriteLine(failures.Count == 0
     ? $"ALL CHECKS PASSED"
