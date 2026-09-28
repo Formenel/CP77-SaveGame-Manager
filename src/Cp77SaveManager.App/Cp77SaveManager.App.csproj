@@ -16,7 +16,7 @@
     <!-- Single source of truth for the version: shown in the title bar
          (Application.ProductVersion, see MainForm.cs) and read by build.bat
          to name the publish folder/zip - bump it here only, nowhere else. -->
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,6 +37,8 @@
        beside the exe. -->
   <ItemGroup>
     <EmbeddedResource Include="language-icon.png" />
+    <!-- Title bar + About dialog (ApplicationIcon alone only sets the exe file icon). -->
+    <EmbeddedResource Include="app.ico" />
   </ItemGroup>
 
 </Project>

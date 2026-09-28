@@ -1,3 +1,5 @@
+using Cp77SaveManager.Core.Storage;
+
 namespace Cp77SaveManager.Core.Models;
 
 /// <summary>Where a save currently lives.</summary>
@@ -57,8 +59,13 @@ public sealed class SaveEntry
     /// <summary>Directory's last-write time - fallback sort key when metadata timestamp can't be parsed.</summary>
     public required DateTime DirectoryLastWriteUtc { get; init; }
 
-    /// <summary>Group key for "per character" grouping. Empty string bucket = "Unknown / no metadata".</summary>
-    public string PlaythroughKey => Metadata?.PlaythroughId ?? string.Empty;
+    /// <summary>
+    /// Group key for "per character" grouping. Empty string bucket = "Unknown / no metadata".
+    /// Also used as a storage folder name, so an ID that isn't a plain safe
+    /// name (e.g. "..\..\x" or "C:\x" from a manipulated save) is treated as
+    /// unknown instead (S1).
+    /// </summary>
+    public string PlaythroughKey => PathSafety.IsSafePlaythroughId(Metadata?.PlaythroughId) ? Metadata!.PlaythroughId! : string.Empty;
 
     /// <summary>
     /// Best available timestamp for sorting/cleanup decisions: metadata's

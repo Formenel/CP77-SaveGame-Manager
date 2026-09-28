@@ -1,4 +1,4 @@
-using Cp77SaveManager.Core.Cleanup;
+﻿using Cp77SaveManager.Core.Cleanup;
 using Cp77SaveManager.Core.Configuration;
 using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
@@ -237,7 +237,7 @@ var configService = new ConfigService(configPath);
 var loadedDefault = configService.Load();
 Check("default SaveDir ends with expected CP77 path", loadedDefault.SaveDir.Replace('\\', '/').EndsWith("Saved Games/CD Projekt Red/Cyberpunk 2077"));
 Check("default StorageDir is a sibling named CP77SGM-storage", loadedDefault.StorageDir.Replace('\\', '/').EndsWith("Saved Games/CD Projekt Red/CP77SGM-storage"));
-Check("default cleanup selection is Auto+Manual", loadedDefault.CleanupRule.SelectedTypes.ToHashSet().SetEquals(new[] { SaveType.AutoSave, SaveType.ManualSave }));
+Check("default cleanup selection is Quick+Manual", loadedDefault.CleanupRule.SelectedTypes.ToHashSet().SetEquals(new[] { SaveType.QuickSave, SaveType.ManualSave }));
 Check("default language is de-DE", loadedDefault.Language == "de-DE");
 
 loadedDefault.Nicknames[ptidA] = "Val the Streetkid";
@@ -248,6 +248,12 @@ var reloaded = configService.Load();
 Check("config round-trips nickname", reloaded.Nicknames[ptidA] == "Val the Streetkid");
 Check("config round-trips cleanup rule", reloaded.CleanupRule.KeepTotal == 42);
 Check("config round-trips language", reloaded.Language == "en-GB");
+Check("config stores save types as names, not numbers", File.ReadAllText(configPath).Contains("\"QuickSave\"") && File.ReadAllText(configPath).Contains("\"ManualSave\""));
+
+// Configs written by <= 0.3.0 stored enums as numbers - must still load.
+File.WriteAllText(configPath, """{ "cleanupRule": { "selectedTypes": [1, 2], "keepTotal": 7 } }""");
+var legacy = configService.Load();
+Check("legacy numeric save types still load", legacy.CleanupRule.KeepTotal == 7 && legacy.CleanupRule.SelectedTypes.ToHashSet().SetEquals(new[] { SaveType.AutoSave, SaveType.QuickSave }));
 
 Directory.Delete(tempRoot, recursive: true);
 
@@ -521,6 +527,8 @@ void BackdateSaveFolder(string dir, DateTime to)
     svc.EnsureReferenceFileExists();
     var afterSecondCall = JsonSerializer.Deserialize<LanguageFile>(File.ReadAllText(deDePath))!;
     Check("[i18n] EnsureReferenceFileExists does not overwrite an existing de-DE.json", afterSecondCall.Lang == "Deutsch (angepasst)");
+    Check("[i18n] EnsureReferenceFileExists keeps existing (hand-edited) keys", afterSecondCall.Strings.GetValueOrDefault("X") == "Y");
+    Check("[i18n] EnsureReferenceFileExists adds keys missing from an existing de-DE.json", LocalizationDefaults.Strings.Keys.All(k => afterSecondCall.Strings.ContainsKey(k)));
 
     // Restore a real de-DE.json for the rest of this section.
     File.WriteAllText(deDePath, JsonSerializer.Serialize(new LanguageFile { Lang = "Deutsch", Strings = new Dictionary<string, string>(LocalizationDefaults.Strings) }));
@@ -588,6 +596,143 @@ void BackdateSaveFolder(string dir, DateTime to)
     }
 
     Directory.Delete(langsDir, recursive: true);
+}
+
+// ---------------------------------------------------------------------
+// 14. Review 2026-09-28 fixes (S1-S7, R1). Runs on the Linux sandbox too,
+//     so path examples use Path.DirectorySeparatorChar where it matters.
+// ---------------------------------------------------------------------
+{
+    string root5 = Path.Combine(Path.GetTempPath(), "cp77sgm-test5-" + Guid.NewGuid().ToString("N"));
+    string live5 = Path.Combine(root5, "live", "Cyberpunk 2077");
+    string storage5 = Path.Combine(root5, "storage-drive", "CP77SGM-storage");
+    Directory.CreateDirectory(live5);
+    Directory.CreateDirectory(storage5);
+    var scanner5 = new SaveScanner();
+    var actions5 = new SaveActionService();
+    var resolver5 = new StoragePathResolver();
+
+    // --- S1: playthroughID must never act as a path -----------------------
+    var escapeTarget = Path.Combine(root5, "escaped");
+    var badIds = new[] { @"..\..\escaped", "../../escaped", escapeTarget, @"C:\evil", ".", "..", "a/b", @"a\b", "", "CON", "nul", new string('a', 65) };
+    foreach (var bad in badIds)
+    {
+        Check($"[S1] unsafe playthroughID rejected: \"{(bad.Length > 20 ? bad[..20] + "..." : bad)}\"", !PathSafety.IsSafePlaythroughId(bad));
+    }
+    Check("[S1] real 16-hex playthroughID accepted", PathSafety.IsSafePlaythroughId("6ab83a8fe6b8c7ff"));
+
+    WriteSaveFolder(live5, "ManualSave-1", BuildMetadataJson("../../escaped", "Corpo", "Male", 5, "05:00:00, 27.09.2026", "ManualSave-1").Replace("\"../../escaped\"", JsonSerializer.Serialize(escapeTarget)), 5000);
+    var evil = scanner5.ScanLive(live5).Single(e => e.FolderName == "ManualSave-1");
+    Check("[S1] manipulated save lands in the Unknown bucket", evil.PlaythroughKey == "");
+    Check("[S1] raw metadata value is still visible for the preview", evil.Metadata?.PlaythroughId == escapeTarget);
+    Check("[S1] storage parent for manipulated save is storage/_unknown", resolver5.ResolveDestinationParent(storage5, evil) == Path.Combine(storage5, "_unknown"));
+    var evilStore = actions5.StoreSave(evil, storage5);
+    Check("[S1] storing manipulated save succeeds inside storage", evilStore.Success && PathSafety.IsStrictlyUnder(evilStore.DestinationPath, storage5));
+    Check("[S1] nothing was written to the attacker-chosen path", !Directory.Exists(escapeTarget));
+
+    // --- R1: save folder with a subfolder is refused, nothing lost ---------
+    WriteSaveFolder(live5, "ManualSave-2", BuildMetadataJson("1234abcd1234abcd", "Corpo", "Male", 5, "05:00:00, 27.09.2026", "ManualSave-2"), 5000);
+    var subDir = Path.Combine(live5, "ManualSave-2", "extra");
+    Directory.CreateDirectory(subDir);
+    File.WriteAllText(Path.Combine(subDir, "keep.txt"), "important");
+    var withSub = scanner5.ScanLive(live5).Single(e => e.FolderName == "ManualSave-2");
+    var subResult = actions5.StoreSave(withSub, storage5);
+    Check("[R1] store of a save folder with a subfolder is refused", !subResult.Success);
+    Check("[R1] refused source is fully intact (incl. subfolder)", File.Exists(Path.Combine(subDir, "keep.txt")) && File.Exists(Path.Combine(live5, "ManualSave-2", "sav.dat")));
+    Check("[R1] no leftover temp folder in storage", !Directory.EnumerateDirectories(storage5, "*.partial*", SearchOption.AllDirectories).Any());
+
+    // --- S4: nested / identical / empty roots are rejected ------------------
+    Check("[S4] valid sibling dirs accepted", PathSafety.ValidateRoots(live5, storage5) is null);
+    Check("[S4] trailing separator on a valid dir accepted", PathSafety.ValidateRoots(live5 + Path.DirectorySeparatorChar, storage5) is null);
+    Check("[S4] storage inside save dir rejected", PathSafety.ValidateRoots(live5, Path.Combine(live5, "storage")) == "ERR_DIR_NESTED");
+    Check("[S4] save dir inside storage rejected", PathSafety.ValidateRoots(Path.Combine(storage5, "x"), storage5) == "ERR_DIR_NESTED");
+    Check("[S4] identical dirs rejected", PathSafety.ValidateRoots(live5, live5 + Path.DirectorySeparatorChar) == "ERR_DIR_SAME");
+    Check("[S4] empty dir rejected", PathSafety.ValidateRoots("", storage5) == "ERR_DIR_EMPTY");
+    Check("[S4] relative dir rejected", PathSafety.ValidateRoots("saves", storage5) == "ERR_DIR_NOT_ABSOLUTE");
+    Check("[S4] drive root rejected", PathSafety.ValidateRoots(Path.GetPathRoot(live5)!, storage5) == "ERR_DIR_DRIVE_ROOT");
+    Check("[S4] every validation key has a text", new[] { "ERR_DIR_EMPTY", "ERR_DIR_NOT_ABSOLUTE", "ERR_DIR_DRIVE_ROOT", "ERR_DIR_SAME", "ERR_DIR_NESTED" }.All(LocalizationDefaults.Strings.ContainsKey));
+
+    // Mover second line of defence: destination inside source is refused
+    // (the old code would have deleted the source incl. the fresh destination).
+    var flatSource = Path.Combine(root5, "flat-source");
+    Directory.CreateDirectory(flatSource);
+    File.WriteAllText(Path.Combine(flatSource, "a.txt"), "a");
+    var insideResult = new SafeFolderMover().MoveFolder(flatSource, Path.Combine(flatSource, "_unknown"), "flat-source");
+    Check("[S4] mover refuses destination inside source", !insideResult.Success);
+    Check("[S4] refused source still intact, no folder created inside it", File.Exists(Path.Combine(flatSource, "a.txt")) && !Directory.Exists(Path.Combine(flatSource, "_unknown")));
+
+    // --- S5: a pre-existing "<dest>.partial" folder is left alone ----------
+    var s5Source = Path.Combine(root5, "s5-live", "ManualSave-3");
+    Directory.CreateDirectory(s5Source);
+    File.WriteAllText(Path.Combine(s5Source, "sav.dat"), "x");
+    var s5Parent = Path.Combine(root5, "s5-dest");
+    var foreignPartial = Path.Combine(s5Parent, "ManualSave-3.partial");
+    Directory.CreateDirectory(foreignPartial);
+    File.WriteAllText(Path.Combine(foreignPartial, "foreign.txt"), "not ours");
+    var s5Result = new SafeFolderMover().MoveFolder(s5Source, s5Parent, "ManualSave-3");
+    Check("[S5] move succeeds next to a foreign .partial folder", s5Result.Success);
+    Check("[S5] foreign .partial folder is NOT deleted", File.Exists(Path.Combine(foreignPartial, "foreign.txt")));
+
+    // --- S2/S3: links below a root are ignored / refused -------------------
+    var outside = Path.Combine(root5, "outside");
+    Directory.CreateDirectory(outside);
+    WriteSaveFolder(outside, "ManualSave-50", BuildMetadataJson("9999aaaa9999aaaa", "Corpo", "Male", 5, "05:00:00, 27.09.2026", "ManualSave-50"), 5000);
+    var linkedSave = Path.Combine(live5, "ManualSave-50");
+    var linkedPtid = Path.Combine(storage5, "9999aaaa9999aaaa");
+    bool linksSupported = true;
+    try
+    {
+        Directory.CreateSymbolicLink(linkedSave, Path.Combine(outside, "ManualSave-50"));
+        Directory.CreateSymbolicLink(linkedPtid, outside);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+    {
+        linksSupported = false; // Windows without developer mode/admin
+    }
+    if (linksSupported)
+    {
+        Check("[S2] linked save folder is recognised as reparse point", PathSafety.IsReparsePoint(linkedSave));
+        Check("[S2] live scan ignores a linked save folder", scanner5.ScanLive(live5).All(e => e.FolderName != "ManualSave-50"));
+        Check("[S2] storage scan ignores a linked PTID folder", scanner5.ScanStorage(storage5).All(e => e.PlaythroughKey != "9999aaaa9999aaaa"));
+
+        var viaLink = new SaveEntry
+        {
+            FolderName = "ManualSave-50", SaveType = SaveType.ManualSave, Index = 50,
+            FullPath = Path.Combine(linkedPtid, "ManualSave-50"), Location = SaveLocation.Storage,
+            TotalSizeBytes = 0, OldFileCount = 0, DirectoryLastWriteUtc = DateTime.UtcNow
+        };
+        var viaLinkDelete = actions5.DeleteSave(viaLink, new[] { live5, storage5 });
+        Check("[S3] delete through a linked PTID folder is refused", !viaLinkDelete.Success);
+        Check("[S3] link target is untouched", File.Exists(Path.Combine(outside, "ManualSave-50", "sav.dat")));
+        Directory.Delete(linkedSave);
+        Directory.Delete(linkedPtid);
+    }
+    else
+    {
+        Console.WriteLine("SKIP  [S2/S3] symlink tests (creating links not permitted here)");
+    }
+
+    // --- S3/S7: root with trailing separator works, empty root doesn't throw
+    var toDelete = scanner5.ScanLive(live5).Single(e => e.FolderName == "ManualSave-2");
+    Directory.Delete(Path.Combine(toDelete.FullPath, "extra"), recursive: true);
+    var trailingDelete = actions5.DeleteSave(toDelete, new[] { "", live5 + Path.DirectorySeparatorChar });
+    Check("[S3] delete works with trailing separator on root (and empty root ignored)", trailingDelete.Success && !Directory.Exists(toDelete.FullPath));
+    Check("[S3] a root itself is never 'under' itself", !PathSafety.IsSafelyUnder(live5, live5));
+
+    // --- S7: broken placeholder in a language file doesn't crash -----------
+    var brokenT = new Translator(new Dictionary<string, string> { ["K"] = "kaputt {5} {" }, new Dictionary<string, string>(), new Dictionary<string, string> { ["K"] = "ok {0}" });
+    Check("[S7] broken format string falls back to next stage", brokenT.Get("K", "x") == "ok x");
+    var allBrokenT = new Translator(new Dictionary<string, string> { ["K"] = "{9}" }, new Dictionary<string, string>(), new Dictionary<string, string>());
+    Check("[S7] all stages broken -> bracketed key, no exception", allBrokenT.Get("K", "x") == "[K]");
+
+    // --- S6: German stays selectable even without de-DE.json ---------------
+    var noLangs = new LocalizationService(Path.Combine(root5, "no-langs-here"));
+    Check("[S6] de-DE listed even when langs folder is missing", noLangs.ScanAvailableLanguages().Any(l => l.Code == "de-DE"));
+
+    // --- R3: Core texts come from the localization table --------------------
+    Check("[R3] cleanup reason uses CLEANUP_REASON", new CleanupPlanner().Plan("k", new[] { withSub }, new CleanupRuleConfig { KeepTotal = 0 }).ToMove.Single().Reason.StartsWith("älter als die 0 neuesten"));
+
+    Directory.Delete(root5, recursive: true);
 }
 
 Console.WriteLine();

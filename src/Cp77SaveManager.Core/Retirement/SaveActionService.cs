@@ -1,3 +1,4 @@
+using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
 using Cp77SaveManager.Core.Storage;
 
@@ -83,7 +84,7 @@ public sealed class SaveActionService
     {
         if (!IsUnderAnyRoot(save.FullPath, managedRoots))
         {
-            return new SingleActionResult(save, false, $"Sicherheitsabbruch: Pfad liegt außerhalb der verwalteten Ordner: {save.FullPath}");
+            return new SingleActionResult(save, false, CoreText.Get("ERR_OUTSIDE_ROOTS", save.FullPath));
         }
 
         try
@@ -131,7 +132,7 @@ public sealed class SaveActionService
                     var ptidFolder = Path.Combine(storageDir, group.PlaythroughKey);
                     if (Directory.Exists(ptidFolder) && !Directory.EnumerateFileSystemEntries(ptidFolder).Any())
                     {
-                        try { Directory.Delete(ptidFolder); } catch (IOException) { /* best-effort tidy-up only */ }
+                        try { Directory.Delete(ptidFolder); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* best-effort tidy-up only */ }
                     }
                 }
                 break;
@@ -140,14 +141,11 @@ public sealed class SaveActionService
         return new RetirementResult(group.PlaythroughKey, mode, results);
     }
 
-    private static bool IsUnderAnyRoot(string path, IReadOnlyCollection<string> roots)
-    {
-        var fullPath = Path.GetFullPath(path);
-        return roots.Any(root =>
-        {
-            var fullRoot = Path.GetFullPath(root);
-            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)
-                   && (fullPath.Length == fullRoot.Length || fullPath[fullRoot.Length] == Path.DirectorySeparatorChar);
-        });
-    }
+    /// <summary>
+    /// Strictly below one of the roots (never the root itself), a trailing
+    /// separator on a root is fine (S3), empty roots are ignored instead of
+    /// throwing (S7), and no junction/symlink may sit between root and target (S2/S3).
+    /// </summary>
+    private static bool IsUnderAnyRoot(string path, IReadOnlyCollection<string> roots) =>
+        roots.Any(root => PathSafety.IsSafelyUnder(path, root));
 }

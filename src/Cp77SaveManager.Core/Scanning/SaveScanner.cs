@@ -1,4 +1,5 @@
 using Cp77SaveManager.Core.Models;
+using Cp77SaveManager.Core.Storage;
 
 namespace Cp77SaveManager.Core.Scanning;
 
@@ -17,7 +18,7 @@ public sealed class SaveScanner
     public IReadOnlyList<SaveEntry> ScanLive(string liveSaveDir)
     {
         if (!Directory.Exists(liveSaveDir)) return Array.Empty<SaveEntry>();
-        return Directory.GetDirectories(liveSaveDir)
+        return RealSubdirectories(liveSaveDir)
             .Select(dir => TryReadSaveFolder(dir, SaveLocation.Live))
             .Where(e => e is not null)
             .Select(e => e!)
@@ -37,7 +38,7 @@ public sealed class SaveScanner
 
         var results = new List<SaveEntry>();
 
-        foreach (var topLevelDir in Directory.GetDirectories(storageDir))
+        foreach (var topLevelDir in RealSubdirectories(storageDir))
         {
             // A top-level dir is either a PTID namespace folder (contains save
             // subfolders) or - if someone dropped a save folder directly under
@@ -54,7 +55,7 @@ public sealed class SaveScanner
             }
 
             // Treat as a PTID namespace folder; descend one level.
-            foreach (var saveDir in Directory.GetDirectories(topLevelDir))
+            foreach (var saveDir in RealSubdirectories(topLevelDir))
             {
                 var entry = TryReadSaveFolder(saveDir, SaveLocation.Storage);
                 if (entry is not null) results.Add(entry);
@@ -63,6 +64,14 @@ public sealed class SaveScanner
 
         return results;
     }
+
+    /// <summary>
+    /// Subdirectories that are NOT junctions/symlinks (S2). A link below a
+    /// managed root would make the app read, move or delete data somewhere
+    /// else entirely, so it is ignored. The root itself may be a link.
+    /// </summary>
+    private static IEnumerable<string> RealSubdirectories(string dir) =>
+        Directory.GetDirectories(dir).Where(d => !PathSafety.IsReparsePoint(d));
 
     private SaveEntry? TryReadSaveFolder(string dir, SaveLocation location)
     {

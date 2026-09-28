@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Cp77SaveManager.Core.Localization;
 
 namespace Cp77SaveManager.Core.Storage;
 
@@ -12,7 +13,7 @@ public sealed record MoveResult(bool Success, string DestinationPath, string? Er
 /// ever assuming a same-volume rename is possible).
 ///
 /// Safety invariants:
-///  - Every file is copied to a ".partial" temp name first, never directly to
+///  - Every file is copied to a uniquely named ".partial-xxxxxxxx" temp folder first, never directly to
 ///    its final name, so a half-written destination is never mistaken for a
 ///    complete one if the process dies mid-copy.
 ///  - Every copied file is verified (size, then SHA-256) against the source
@@ -27,24 +28,14 @@ public sealed class SafeFolderMover
     {
         if (!Directory.Exists(sourceDir))
         {
-            return new MoveResult(false, string.Empty, $"Quellordner existiert nicht: {sourceDir}");
+            return new MoveResult(false, string.Empty, CoreText.Get("ERR_SOURCE_MISSING", sourceDir));
         }
 
         var destDir = Path.Combine(destinationParentDir, destinationFolderName);
         if (Directory.Exists(destDir))
         {
-            return new MoveResult(false, destDir, $"Zielordner existiert bereits: {destDir}");
+            return new MoveResult(false, destDir, CoreText.Get("ERR_DEST_EXISTS", destDir));
         }
-
-        Directory.CreateDirectory(destinationParentDir);
-
-        var partialDestDir = destDir + ".partial";
-        if (Directory.Exists(partialDestDir))
-        {
-            // Leftover from a previous crashed run - never reuse, always start clean.
-            Directory.Delete(partialDestDir, recursive: true);
-        }
-        Directory.CreateDirectory(partialDestDir);
 
         // Snapshotted BEFORE anything reads the source: enumerating a
         // directory's contents, and reading a file's bytes for the SHA-256
@@ -54,6 +45,32 @@ public sealed class SafeFolderMover
         // already happened - is what actually preserves the original
         // access time instead of copying our own read's timestamp.
         var sourceDirTimestamps = TimestampSnapshot.Capture(sourceDir, isDirectory: true);
+
+        // R1/S2: only flat save folders are moved. Files are copied one level
+        // deep, but the source is deleted recursively - a subfolder (or a
+        // junction/symlink) would otherwise be lost or followed. CP77 saves
+        // never contain either, so anything else is refused, not guessed at.
+        if (PathSafety.IsReparsePoint(sourceDir)
+            || Directory.EnumerateDirectories(sourceDir).Any()
+            || Directory.EnumerateFiles(sourceDir).Any(PathSafety.IsReparsePoint))
+        {
+            return new MoveResult(false, destDir, CoreText.Get("ERR_NOT_FLAT_SAVE", Path.GetFileName(sourceDir)));
+        }
+
+        // S4: destination inside the source would be deleted together with it.
+        if (PathSafety.IsStrictlyUnder(destDir, sourceDir))
+        {
+            return new MoveResult(false, destDir, CoreText.Get("ERR_DEST_INSIDE_SOURCE", destDir));
+        }
+
+        Directory.CreateDirectory(destinationParentDir);
+
+        // S5: unique temp name instead of deleting a pre-existing "<dest>.partial"
+        // (which might be someone else's folder, not our own crash leftover).
+        var partialDestDir = $"{destDir}.partial-{Guid.NewGuid().ToString("N")[..8]}";
+        Directory.CreateDirectory(partialDestDir);
+
+        // File timestamps: attribute reads above don't touch them, content reads come later.
         var fileSnapshots = Directory.EnumerateFiles(sourceDir)
             .ToDictionary(f => f, f => TimestampSnapshot.Capture(f, isDirectory: false));
 
@@ -68,7 +85,7 @@ public sealed class SafeFolderMover
 
                 if (!FilesMatch(sourceFile, destFile))
                 {
-                    throw new IOException($"Verifikation fehlgeschlagen für Datei: {fileName}");
+                    throw new IOException(CoreText.Get("ERR_VERIFY_FAILED", fileName));
                 }
 
                 // File.Copy sets the new file's creation time to "now" (only

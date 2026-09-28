@@ -1,4 +1,5 @@
 using Cp77SaveManager.Core.Configuration;
+using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
 
 namespace Cp77SaveManager.Core.Cleanup;
@@ -44,7 +45,7 @@ public sealed class CleanupPlanner
 
         var typesLabel = string.Join("+", selected.Select(t => t.ToString()));
         var toMove = move
-            .Select(s => new CleanupPlanItem(s, $"älter als die {rule.KeepTotal} neuesten von [{typesLabel}] (gemischt gezählt)"))
+            .Select(s => new CleanupPlanItem(s, CoreText.Get("CLEANUP_REASON", rule.KeepTotal, typesLabel)))
             .ToList();
 
         var kept = keep.Concat(untouched).ToList();

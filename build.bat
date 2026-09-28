@@ -76,7 +76,7 @@ rem unter tools\, dafuer reicht ein normales Zip zum manuellen Entpacken
 rem (Nexus-Kategorie "Miscellaneous").
 rem
 rem *.pdb (Debug-Symbole) bleiben in publish\tools\... fuer lokale Zwecke
-rem erhalten, landen aber NICHT im Zip. Compress-Archive kennt keinen
+rem erhalten, landen aber NICHT im Zip. Der Zip-Aufruf kennt keinen
 rem Exclude-Filter, daher erst per robocopy in einen Zwischenordner ohne
 rem *.pdb staged und DER gezippt.
 set "ZIPSTAGE=publish\_zipstage"
@@ -92,7 +92,9 @@ if %errorlevel% GEQ 8 (
 
 set "ZIPNAME=cp77sgm-%CP77_FULL_VERSION%.zip"
 if exist "publish\%ZIPNAME%" del "publish\%ZIPNAME%"
-powershell -NoProfile -Command "Compress-Archive -Path '%ZIPSTAGE%\tools' -DestinationPath 'publish\%ZIPNAME%' -Force"
+rem ZipFile statt Compress-Archive: Compress-Archive (Windows PowerShell 5.1)
+rem schreibt Backslashes in die Zip-Eintraege, die Zip-Spezifikation verlangt "/".
+powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path '%ZIPSTAGE%').Path, (Join-Path (Get-Location).Path 'publish\%ZIPNAME%'))"
 if errorlevel 1 (
     echo.
     echo ZIP-ERSTELLUNG FEHLGESCHLAGEN.

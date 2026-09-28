@@ -5,7 +5,7 @@ namespace Cp77SaveManager.Core.Configuration;
 
 public sealed class CleanupRuleConfig
 {
-    /// <summary>Which save types count toward the "keep last N" rule. Default: Auto + Manual.</summary>
+    /// <summary>Which save types count toward the "keep last N" rule. Default: Quick + Manual.</summary>
     [JsonPropertyName("selectedTypes")]
     public List<SaveType> SelectedTypes { get; set; } = new(SaveTypeExtensions.DefaultCleanupSelection);
 

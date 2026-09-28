@@ -40,15 +40,41 @@ public sealed class LocalizationService
     /// CreateTranslator, so de-DE is always present as the completion-%
     /// reference and as a selectable language even on a brand-new install
     /// with no langs\ folder at all.
+    ///
+    /// An existing de-DE.json only gets keys added that it's missing (new
+    /// strings from an app update) - existing values are never touched.
+    ///
+    /// Best-effort (S6): if the exe folder isn't writable (e.g. Program Files)
+    /// this silently does nothing - the built-in defaults still cover every
+    /// key and ScanAvailableLanguages still lists "Deutsch".
     /// </summary>
     public void EnsureReferenceFileExists()
     {
-        var path = ReferenceFilePath;
-        if (File.Exists(path)) return;
+        try
+        {
+            var path = ReferenceFilePath;
+            var existing = TryLoad(path);
+            LanguageFile file;
+            if (existing is null)
+            {
+                if (File.Exists(path)) return; // exists but unreadable/broken - don't overwrite a human's file
+                file = new LanguageFile { Lang = "Deutsch", Strings = new Dictionary<string, string>(LocalizationDefaults.Strings) };
+            }
+            else
+            {
+                var missing = LocalizationDefaults.Strings.Where(kv => !existing.Strings.ContainsKey(kv.Key)).ToList();
+                if (missing.Count == 0) return;
+                foreach (var (key, value) in missing) existing.Strings[key] = value;
+                file = existing;
+            }
 
-        Directory.CreateDirectory(_langsDir);
-        var file = new LanguageFile { Lang = "Deutsch", Strings = new Dictionary<string, string>(LocalizationDefaults.Strings) };
-        File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
+            Directory.CreateDirectory(_langsDir);
+            File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // read-only install location - defaults are used, see summary
+        }
     }
 
     private string ReferenceFilePath => Path.Combine(_langsDir, ReferenceCode + ".json");
@@ -62,18 +88,26 @@ public sealed class LocalizationService
     public IReadOnlyList<LanguageInfo> ScanAvailableLanguages()
     {
         var result = new List<LanguageInfo>();
-        if (!Directory.Exists(_langsDir)) return result;
-
         var referenceKeys = LoadReferenceKeys();
 
-        foreach (var path in Directory.EnumerateFiles(_langsDir, "*.json"))
+        if (Directory.Exists(_langsDir))
         {
-            var file = TryLoad(path);
-            if (file is null || string.IsNullOrWhiteSpace(file.Lang)) continue;
+            foreach (var path in Directory.EnumerateFiles(_langsDir, "*.json"))
+            {
+                var file = TryLoad(path);
+                if (file is null || string.IsNullOrWhiteSpace(file.Lang)) continue;
 
-            var code = Path.GetFileNameWithoutExtension(path);
-            var percent = ComputeCompletion(file.Strings, referenceKeys);
-            result.Add(new LanguageInfo(code, file.Lang, percent, path));
+                var code = Path.GetFileNameWithoutExtension(path);
+                var percent = ComputeCompletion(file.Strings, referenceKeys);
+                result.Add(new LanguageInfo(code, file.Lang, percent, path));
+            }
+        }
+
+        // German is always selectable, even if de-DE.json couldn't be written
+        // (S6) - otherwise a user who switched away could never switch back.
+        if (!result.Any(l => l.Code.Equals(ReferenceCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            result.Add(new LanguageInfo(ReferenceCode, "Deutsch", 100, string.Empty));
         }
 
         return result.OrderBy(l => l.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -116,7 +150,7 @@ public sealed class LocalizationService
         {
             return JsonSerializer.Deserialize<LanguageFile>(File.ReadAllText(path));
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             return null; // broken JSON - treated as "not available", scan/translator never crash over it
         }

@@ -27,17 +27,33 @@ public sealed class Translator
     }
 
     /// <summary>Plain lookup, no formatting.</summary>
-    public string Get(string key)
-    {
-        if (_selected.TryGetValue(key, out var v1) && !string.IsNullOrEmpty(v1)) return v1;
-        if (_reference.TryGetValue(key, out var v2) && !string.IsNullOrEmpty(v2)) return v2;
-        if (_defaults.TryGetValue(key, out var v3) && !string.IsNullOrEmpty(v3)) return v3;
+    public string Get(string key) => Candidates(key).FirstOrDefault() ?? $"[{key}]";
 
-        // Should never happen as long as LocalizationDefaults stays complete -
-        // a visible bracketed key beats a crash or a silently blank label.
+    /// <summary>
+    /// Looks up key and formats it with args. A broken placeholder in a
+    /// hand-edited language file (e.g. "{5}" or a lone "{") must not crash the
+    /// app (S7) - it falls through to the next stage instead.
+    /// </summary>
+    public string Get(string key, params object?[] args)
+    {
+        foreach (var candidate in Candidates(key))
+        {
+            try
+            {
+                return string.Format(candidate, args);
+            }
+            catch (FormatException)
+            {
+                // try next stage
+            }
+        }
         return $"[{key}]";
     }
 
-    /// <summary>Looks up key, then runs the result through string.Format with args.</summary>
-    public string Get(string key, params object?[] args) => string.Format(Get(key), args);
+    private IEnumerable<string> Candidates(string key)
+    {
+        if (_selected.TryGetValue(key, out var v1) && !string.IsNullOrEmpty(v1)) yield return v1;
+        if (_reference.TryGetValue(key, out var v2) && !string.IsNullOrEmpty(v2)) yield return v2;
+        if (_defaults.TryGetValue(key, out var v3) && !string.IsNullOrEmpty(v3)) yield return v3;
+    }
 }

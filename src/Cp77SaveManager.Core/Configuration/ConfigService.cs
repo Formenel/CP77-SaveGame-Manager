@@ -1,12 +1,17 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Cp77SaveManager.Core.Configuration;
 
 public sealed class ConfigService
 {
+    // Enums (save types) as names instead of numbers: readable in config.json
+    // and independent of enum order. Old configs with numbers still load
+    // (JsonStringEnumConverter accepts integers by default).
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     private readonly string _configFilePath;

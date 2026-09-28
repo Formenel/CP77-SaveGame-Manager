@@ -5,6 +5,7 @@ using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
 using Cp77SaveManager.Core.Retirement;
 using Cp77SaveManager.Core.Scanning;
+using Cp77SaveManager.Core.Storage;
 
 namespace Cp77SaveManager.App;
 
@@ -45,18 +46,22 @@ public sealed class MainForm : Form
     private readonly SplitContainer _innerSplit;
 
     private readonly MenuStrip _menuStrip;
-    private readonly ToolStripMenuItem _toolsMenu;
     private readonly ToolStripMenuItem _languageMenu;
 
-    private readonly ToolStripButton _reloadButton;
-    private readonly ToolStripButton _settingsButton;
-    private readonly ToolStripButton _cleanupAllButton;
-    private readonly ToolStripMenuItem _renameMenuItem;
-    private readonly ToolStripMenuItem _cleanupOneMenuItem;
-    private readonly ToolStripMenuItem _retireMenuItem;
-    private readonly ToolStripMenuItem _storeMenuItem;
-    private readonly ToolStripMenuItem _restoreMenuItem;
-    private readonly ToolStripMenuItem _deleteMenuItem;
+    /// <summary>
+    /// Every menu entry / toolbar button, registered once: text key for
+    /// language switches, optional shortcut text key, and when it's enabled.
+    /// Main menu, toolbar and both context menus are built from the same
+    /// actions, so their texts and enabled states can't drift apart.
+    /// </summary>
+    private readonly List<(ToolStripItem Item, string TextKey, string? ShortcutTextKey, Func<bool> CanRun)> _commands = new();
+
+    /// <summary>
+    /// "CP77 Save Manager 0.3.0" - ProductVersion is the informational version,
+    /// which the SDK suffixes with "+&lt;git commit hash&gt;"; only the part
+    /// before "+" is the plain &lt;Version&gt; from the csproj. Not translated.
+    /// </summary>
+    private static string AppTitle => $"CP77 Save Manager {Application.ProductVersion.Split('+')[0]}";
 
     private IReadOnlyCollection<string> ManagedRoots => new[] { _config.SaveDir, _config.StorageDir };
 
@@ -68,34 +73,76 @@ public sealed class MainForm : Form
         _config = _configService.Load();
         _localizationService.EnsureReferenceFileExists();
         _t = _localizationService.CreateTranslator(_config.Language);
+        CoreText.Current = _t;
 
         // ProductVersion comes from <Version> in Cp77SaveManager.App.csproj -
         // the one place to bump for a new release; build.bat reads the same
         // value to name the publish folder/zip, so there's nothing to keep in sync.
-        Text = _t.Get("APP_TITLE", Application.ProductVersion);
+        Text = AppTitle;
         MinimumSize = new Size(700, 450);
         StartPosition = FormStartPosition.Manual; // we place it ourselves from config
+
+        // --- actions (shared by menu, toolbar, context menus) ---------------
+        Func<bool> always = () => true;
+        Func<bool> canStore = () => GetSelectedSaves() is { Count: > 0 } s && s.All(x => x.Location == SaveLocation.Live);
+        Func<bool> canRestore = () => GetSelectedSaves() is { Count: > 0 } s && s.All(x => x.Location == SaveLocation.Storage);
+        Func<bool> hasSelection = HasSelection;
+        Func<bool> hasItems = HasItems;
+        Func<bool> isCharacter = () => GetSelectedGroup() is { IsUnknown: false }; // "Unknown" isn't a character
+        Func<bool> anyCharacter = () => _groups.Any(g => !g.IsUnknown);
+
+        Action cleanupOne = () => { if (GetSelectedGroup() is { IsUnknown: false } group) RunCleanup(new[] { group }); };
+        Action cleanupAll = () => RunCleanup(_groups.Where(g => !g.IsUnknown).ToList());
+
+        // --- main menu ------------------------------------------------------
+        _menuStrip = new MenuStrip();
+
+        var fileMenu = TopMenu("MENU_FILE",
+            MenuItem("BTN_RELOAD", LoadData, always, Keys.F5, "SHORTCUT_RELOAD"),
+            new ToolStripSeparator(),
+            MenuItem("MENU_EXIT", Close, always));
+
+        var savesMenu = TopMenu("MENU_SAVES",
+            MenuItem("MENU_STORE_ITEM", StoreSelectedSaves, canStore),
+            MenuItem("MENU_RESTORE_ITEM", RestoreSelectedSaves, canRestore),
+            MenuItem("MENU_DELETE_ITEM", DeleteSelectedSaves, hasSelection),
+            new ToolStripSeparator(),
+            MenuItem("MENU_SELECT_ALL", SelectAllSaves, hasItems, Keys.Control | Keys.A, "MENU_SELECT_ALL_SHORTCUT"));
+
+        var characterMenu = TopMenu("MENU_CHARACTER",
+            MenuItem("MENU_RENAME_ITEM", RenameSelectedCharacter, isCharacter, Keys.F2, "SHORTCUT_RENAME"),
+            MenuItem("MENU_CLEANUP_CHAR_ITEM", cleanupOne, isCharacter),
+            MenuItem("BTN_CLEANUP_ALL", cleanupAll, anyCharacter),
+            new ToolStripSeparator(),
+            MenuItem("MENU_RETIRE_CHAR_ITEM", RetireSelectedCharacter, isCharacter));
 
         using var languageIconStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(
             $"{typeof(MainForm).Namespace}.language-icon.png");
         var languageIcon = languageIconStream is not null ? Image.FromStream(languageIconStream) : null;
-
-        _menuStrip = new MenuStrip();
-        _toolsMenu = new ToolStripMenuItem(_t.Get("MENU_TOOLS"));
         _languageMenu = new ToolStripMenuItem(_t.Get("MENU_LANGUAGE"), languageIcon);
-        _toolsMenu.DropDownItems.Add(_languageMenu);
-        _menuStrip.Items.Add(_toolsMenu);
+        _commands.Add((_languageMenu, "MENU_LANGUAGE", null, always));
+        var toolsMenu = TopMenu("MENU_TOOLS",
+            MenuItem("BTN_SETTINGS", OpenSettings, always),
+            _languageMenu);
+
+        var helpMenu = TopMenu("MENU_HELP",
+            MenuItem("MENU_ABOUT", ShowAbout, always));
+
+        _menuStrip.Items.AddRange(new ToolStripItem[] { fileMenu, savesMenu, characterMenu, toolsMenu, helpMenu });
         MainMenuStrip = _menuStrip;
         BuildLanguageMenu();
 
-        var toolStrip = new ToolStrip();
-        _reloadButton = new ToolStripButton(_t.Get("BTN_RELOAD")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        _reloadButton.Click += (_, _) => LoadData();
-        _settingsButton = new ToolStripButton(_t.Get("BTN_SETTINGS")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        _settingsButton.Click += (_, _) => OpenSettings();
-        _cleanupAllButton = new ToolStripButton(_t.Get("BTN_CLEANUP_ALL")) { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        _cleanupAllButton.Click += (_, _) => RunCleanup(_groups.Where(g => !g.IsUnknown).ToList());
-        toolStrip.Items.AddRange(new ToolStripItem[] { _reloadButton, _settingsButton, new ToolStripSeparator(), _cleanupAllButton });
+        // --- toolbar: only the frequent actions, no (useless) drag grip -----
+        var toolStrip = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        toolStrip.Items.AddRange(new ToolStripItem[]
+        {
+            ToolButton("BTN_RELOAD", LoadData, always),
+            new ToolStripSeparator(),
+            ToolButton("BTN_STORE", StoreSelectedSaves, canStore),
+            ToolButton("BTN_RESTORE", RestoreSelectedSaves, canRestore),
+            new ToolStripSeparator(),
+            ToolButton("BTN_CLEANUP_ALL", cleanupAll, anyCharacter)
+        });
 
         _statusStrip = new StatusStrip();
         _statusLabel = new ToolStripStatusLabel(_t.Get("STATUS_READY"));
@@ -110,24 +157,28 @@ public sealed class MainForm : Form
         _innerSplit = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
 
         _tree = new TreeView { Dock = DockStyle.Fill, HideSelection = false };
-        _tree.AfterSelect += (_, _) => UpdateListForSelection();
-
-        _treeContextMenu = new ContextMenuStrip();
-        _renameMenuItem = new ToolStripMenuItem(_t.Get("MENU_RENAME_ITEM"));
-        _renameMenuItem.Click += (_, _) => RenameSelectedCharacter();
-        _cleanupOneMenuItem = new ToolStripMenuItem(_t.Get("MENU_CLEANUP_CHAR_ITEM"));
-        _cleanupOneMenuItem.Click += (_, _) =>
+        _tree.AfterSelect += (_, _) =>
         {
-            if (GetSelectedGroup() is { } group) RunCleanup(new[] { group });
+            UpdateListForSelection();
+            UpdateCommandStates();
         };
-        _retireMenuItem = new ToolStripMenuItem(_t.Get("MENU_RETIRE_CHAR_ITEM"));
-        _retireMenuItem.Click += (_, _) => RetireSelectedCharacter();
-        _treeContextMenu.Items.AddRange(new ToolStripItem[] { _renameMenuItem, _cleanupOneMenuItem, new ToolStripSeparator(), _retireMenuItem });
+
+        // Context menus repeat the main menu entries (without shortcut keys -
+        // those are handled once, by the main menu).
+        _treeContextMenu = new ContextMenuStrip();
+        _treeContextMenu.Items.AddRange(new ToolStripItem[]
+        {
+            MenuItem("MENU_RENAME_ITEM", RenameSelectedCharacter, isCharacter, shortcutTextKey: "SHORTCUT_RENAME"),
+            MenuItem("MENU_CLEANUP_CHAR_ITEM", cleanupOne, isCharacter),
+            new ToolStripSeparator(),
+            MenuItem("MENU_RETIRE_CHAR_ITEM", RetireSelectedCharacter, isCharacter)
+        });
         _tree.NodeMouseClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Right && e.Node.Tag is PlaythroughGroup)
             {
                 _tree.SelectedNode = e.Node;
+                UpdateCommandStates();
                 _treeContextMenu.Show(_tree, e.Location);
             }
         };
@@ -144,29 +195,35 @@ public sealed class MainForm : Form
         _list.Columns[4].Width = 130;
         _list.Columns[5].Width = 160;
         _list.Columns[6].Width = 70;
-        _list.SelectedIndexChanged += (_, _) => UpdatePreview();
+        _list.SelectedIndexChanged += (_, _) =>
+        {
+            UpdatePreview();
+            if (!_isLoadingList) UpdateCommandStates();
+        };
         _list.ColumnClick += (_, e) => SortByColumn(e.Column);
 
         _listContextMenu = new ContextMenuStrip();
-        _storeMenuItem = new ToolStripMenuItem(_t.Get("MENU_STORE_ITEM"));
-        _storeMenuItem.Click += (_, _) => StoreSelectedSaves();
-        _restoreMenuItem = new ToolStripMenuItem(_t.Get("MENU_RESTORE_ITEM"));
-        _restoreMenuItem.Click += (_, _) => RestoreSelectedSaves();
-        _deleteMenuItem = new ToolStripMenuItem(_t.Get("MENU_DELETE_ITEM"));
-        _deleteMenuItem.Click += (_, _) => DeleteSelectedSaves();
-        _listContextMenu.Items.AddRange(new ToolStripItem[] { _storeMenuItem, _restoreMenuItem, _deleteMenuItem });
+        _listContextMenu.Items.AddRange(new ToolStripItem[]
+        {
+            MenuItem("MENU_STORE_ITEM", StoreSelectedSaves, canStore),
+            MenuItem("MENU_RESTORE_ITEM", RestoreSelectedSaves, canRestore),
+            MenuItem("MENU_DELETE_ITEM", DeleteSelectedSaves, hasSelection),
+            new ToolStripSeparator(),
+            MenuItem("MENU_SELECT_ALL", SelectAllSaves, hasItems, shortcutTextKey: "MENU_SELECT_ALL_SHORTCUT")
+        });
+
         _list.MouseUp += (_, e) =>
         {
             if (e.Button != MouseButtons.Right) return;
-            var hit = _list.GetItemAt(e.X, e.Y);
-            if (hit is null) return;
+            if (_list.Items.Count == 0) return;
+            var hit = _list.GetItemAt(e.X, e.Y); // null = empty area below the rows: keep selection, menu still offers "Select all"
 
             // OS-standard behaviour: right-clicking an item that's already
             // part of the current multi-selection keeps the whole selection
             // (so "Storen"/"Löschen" apply to all of it); right-clicking
             // outside it collapses to just the clicked item, same as
             // Windows Explorer.
-            if (!hit.Selected)
+            if (hit is not null && !hit.Selected)
             {
                 foreach (ListViewItem item in _list.SelectedItems.Cast<ListViewItem>().ToList())
                 {
@@ -175,9 +232,7 @@ public sealed class MainForm : Form
                 hit.Selected = true;
             }
 
-            var selected = GetSelectedSaves();
-            _storeMenuItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Live);
-            _restoreMenuItem.Enabled = selected.Count > 0 && selected.All(s => s.Location == SaveLocation.Storage);
+            UpdateCommandStates();
             _listContextMenu.Show(_list, e.Location);
         };
 
@@ -204,6 +259,10 @@ public sealed class MainForm : Form
         Controls.Add(_statusStrip);
         Controls.Add(toolStrip);
         Controls.Add(_menuStrip); // added last among the Top-docked controls so it ends up at the very top
+
+        // Title bar / taskbar icon: <ApplicationIcon> only sets the exe file's
+        // icon, the form itself would show the WinForms default otherwise.
+        if (AppIcon.Load() is { } appIcon) Icon = appIcon;
 
         Load += (_, _) => LoadData();
         Shown += (_, _) => ApplyWindowConfigAndSplitters();
@@ -234,6 +293,7 @@ public sealed class MainForm : Form
 
         _config.Language = code;
         _t = _localizationService.CreateTranslator(code);
+        CoreText.Current = _t;
         _configService.Save(_config);
 
         RefreshLocalizedText();
@@ -250,24 +310,70 @@ public sealed class MainForm : Form
     /// </summary>
     private void RefreshLocalizedText()
     {
-        Text = _t.Get("APP_TITLE", Application.ProductVersion);
+        Text = AppTitle;
 
-        _toolsMenu.Text = _t.Get("MENU_TOOLS");
-        _languageMenu.Text = _t.Get("MENU_LANGUAGE");
-
-        _reloadButton.Text = _t.Get("BTN_RELOAD");
-        _settingsButton.Text = _t.Get("BTN_SETTINGS");
-        _cleanupAllButton.Text = _t.Get("BTN_CLEANUP_ALL");
-
-        _renameMenuItem.Text = _t.Get("MENU_RENAME_ITEM");
-        _cleanupOneMenuItem.Text = _t.Get("MENU_CLEANUP_CHAR_ITEM");
-        _retireMenuItem.Text = _t.Get("MENU_RETIRE_CHAR_ITEM");
-
-        _storeMenuItem.Text = _t.Get("MENU_STORE_ITEM");
-        _restoreMenuItem.Text = _t.Get("MENU_RESTORE_ITEM");
-        _deleteMenuItem.Text = _t.Get("MENU_DELETE_ITEM");
+        foreach (var (item, textKey, shortcutTextKey, _) in _commands)
+        {
+            item.Text = _t.Get(textKey);
+            if (shortcutTextKey is not null && item is ToolStripMenuItem menuItem)
+            {
+                menuItem.ShortcutKeyDisplayString = _t.Get(shortcutTextKey);
+            }
+        }
 
         UpdateColumnHeaderArrows();
+    }
+
+    // -------------------------------------------------------------------
+    // Menu / toolbar plumbing
+    // -------------------------------------------------------------------
+
+    private ToolStripMenuItem TopMenu(string textKey, params ToolStripItem[] items)
+    {
+        var menu = new ToolStripMenuItem(_t.Get(textKey));
+        menu.DropDownItems.AddRange(items);
+        _commands.Add((menu, textKey, null, () => true));
+        return menu;
+    }
+
+    private ToolStripMenuItem MenuItem(string textKey, Action run, Func<bool> canRun, Keys shortcut = Keys.None, string? shortcutTextKey = null)
+    {
+        var item = new ToolStripMenuItem(_t.Get(textKey)) { ShortcutKeys = shortcut };
+        if (shortcutTextKey is not null) item.ShortcutKeyDisplayString = _t.Get(shortcutTextKey);
+        item.Click += (_, _) => run();
+        _commands.Add((item, textKey, shortcutTextKey, canRun));
+        return item;
+    }
+
+    private ToolStripButton ToolButton(string textKey, Action run, Func<bool> canRun)
+    {
+        var button = new ToolStripButton(_t.Get(textKey)) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        button.Click += (_, _) => run();
+        _commands.Add((button, textKey, null, canRun));
+        return button;
+    }
+
+    /// <summary>
+    /// Enables/disables every registered entry for the current tree/list
+    /// selection. Also decides whether a shortcut (F2, Ctrl+A) fires -
+    /// WinForms ignores shortcuts of disabled menu items.
+    /// </summary>
+    private bool HasSelection() => _list.SelectedItems.Count > 0;
+
+    private bool HasItems() => _list.Items.Count > 0;
+
+    private void UpdateCommandStates()
+    {
+        foreach (var (item, _, _, canRun) in _commands)
+        {
+            item.Enabled = canRun();
+        }
+    }
+
+    private void ShowAbout()
+    {
+        using var dialog = new AboutDialog(_t, AppTitle, Icon);
+        dialog.ShowDialog(this);
     }
 
     // -------------------------------------------------------------------
@@ -398,6 +504,18 @@ public sealed class MainForm : Form
     {
         _config = _configService.Load();
 
+        // S4: never scan (and thus never offer store/delete) with an empty,
+        // identical or nested save/storage dir - e.g. from a hand-edited config.json.
+        var dirError = PathSafety.ValidateRoots(_config.SaveDir, _config.StorageDir);
+        if (dirError is not null)
+        {
+            _groups = Array.Empty<PlaythroughGroup>();
+            BuildTree();
+            UpdateCommandStates();
+            _statusLabel.Text = _t.Get("STATUS_INVALID_DIRS", _t.Get(dirError));
+            return;
+        }
+
         var liveSaves = _scanner.ScanLive(_config.SaveDir);
         var storageSaves = _scanner.ScanStorage(_config.StorageDir);
         var allSaves = liveSaves.Concat(storageSaves).ToList();
@@ -405,6 +523,7 @@ public sealed class MainForm : Form
         _groups = PlaythroughGroup.GroupSaves(allSaves, _config.Nicknames);
 
         BuildTree();
+        UpdateCommandStates();
         _statusLabel.Text = _t.Get("STATUS_SUMMARY", liveSaves.Count, storageSaves.Count, _groups.Count, _config.SaveDir, _config.StorageDir);
     }
 
@@ -510,10 +629,13 @@ public sealed class MainForm : Form
         {
             try
             {
+                // R2: Image.FromStream needs its stream alive for the image's
+                // whole lifetime - copy into a standalone Bitmap instead.
                 using var stream = File.OpenRead(save.ScreenshotPath);
-                _screenshotBox.Image = Image.FromStream(stream);
+                using var loaded = Image.FromStream(stream);
+                _screenshotBox.Image = new Bitmap(loaded);
             }
-            catch (Exception ex) when (ex is IOException or ArgumentException)
+            catch (Exception ex) when (ex is IOException or ArgumentException or System.Runtime.InteropServices.ExternalException)
             {
                 // Corrupt/unreadable image - fall back to no preview rather than crashing.
                 _screenshotBox.Image = null;
@@ -595,6 +717,7 @@ public sealed class MainForm : Form
         using var dialog = new RetireDialog(_t, group.DisplayLabel, group.Live.Count(), group.Stored.Count());
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.ChosenMode is not { } mode) return;
 
+        Cursor.Current = Cursors.WaitCursor;
         var result = _actionService.Retire(group, mode, _config.StorageDir, ManagedRoots);
 
         var verb = mode == RetirementMode.StoreAll ? _t.Get("RETIRE_VERB_STORED") : _t.Get("RETIRE_VERB_DELETED");
@@ -617,6 +740,21 @@ public sealed class MainForm : Form
     // multi-selection, same as an OS file manager would.
     // -------------------------------------------------------------------
 
+    private void SelectAllSaves()
+    {
+        // Guard + one preview update at the end instead of one per item.
+        _isLoadingList = true;
+        _list.BeginUpdate();
+        foreach (ListViewItem item in _list.Items)
+        {
+            item.Selected = true;
+        }
+        _list.EndUpdate();
+        _isLoadingList = false;
+        UpdatePreview();
+        UpdateCommandStates();
+    }
+
     private IReadOnlyList<SaveEntry> GetSelectedSaves() =>
         _list.SelectedItems.Cast<ListViewItem>().Select(i => (SaveEntry)i.Tag!).ToList();
 
@@ -625,6 +763,7 @@ public sealed class MainForm : Form
         var saves = GetSelectedSaves().Where(s => s.Location == SaveLocation.Live).ToList();
         if (saves.Count == 0) return;
 
+        Cursor.Current = Cursors.WaitCursor; // resets itself once the UI processes messages again
         var failures = new List<(SaveEntry Save, string? Error)>();
         foreach (var save in saves)
         {
@@ -649,6 +788,7 @@ public sealed class MainForm : Form
 
         var failures = new List<(SaveEntry Save, string? Error)>();
         var renamed = new List<(SaveEntry Save, string NewName)>();
+        Cursor.Current = Cursors.WaitCursor;
         foreach (var save in saves)
         {
             var result = _actionService.RestoreSave(save, _config.SaveDir);
@@ -691,19 +831,28 @@ public sealed class MainForm : Form
         var saves = GetSelectedSaves();
         if (saves.Count == 0) return;
 
-        var confirmText = saves.Count == 1
-            ? _t.Get("CONFIRM_DELETE_SINGLE", saves[0].FolderName)
-            : _t.Get("CONFIRM_DELETE_MULTI", saves.Count, string.Join("\r\n", saves.Select(s => $"- {s.FolderName}")));
-
-        var confirm = MessageBox.Show(
-            this,
-            confirmText,
-            _t.Get("DLG_DELETE_CONFIRM_TITLE"),
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2);
+        DialogResult confirm;
+        if (saves.Count == 1)
+        {
+            confirm = MessageBox.Show(
+                this,
+                _t.Get("CONFIRM_DELETE_SINGLE", saves[0].FolderName),
+                _t.Get("DLG_DELETE_CONFIRM_TITLE"),
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+        }
+        else
+        {
+            // Multi: scrollable list instead of a MessageBox that grows off-screen.
+            // {1} (the old inline name list) is left empty - the names go into the list.
+            var question = _t.Get("CONFIRM_DELETE_MULTI", saves.Count, "").TrimEnd();
+            using var dialog = new ConfirmListDialog(_t, _t.Get("DLG_DELETE_CONFIRM_TITLE"), question, saves.Select(s => s.FolderName));
+            confirm = dialog.ShowDialog(this);
+        }
         if (confirm != DialogResult.Yes) return;
 
+        Cursor.Current = Cursors.WaitCursor;
         var failures = new List<(SaveEntry Save, string? Error)>();
         foreach (var save in saves)
         {
@@ -758,6 +907,7 @@ public sealed class MainForm : Form
         }
 
         var executionPlan = new CleanupPlan(string.Empty, preview.ConfirmedItems, Array.Empty<SaveEntry>());
+        Cursor.Current = Cursors.WaitCursor;
         var results = _executor.Execute(executionPlan, _config.StorageDir);
 
         var succeeded = results.Count(r => r.MoveResult.Success);

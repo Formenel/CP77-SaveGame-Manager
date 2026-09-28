@@ -1,3 +1,5 @@
+using Cp77SaveManager.Core.Localization;
+
 namespace Cp77SaveManager.Core.Models;
 
 /// <summary>
@@ -33,12 +35,12 @@ public sealed class PlaythroughGroup
             var meta = newest?.Metadata;
             if (meta is null)
             {
-                return IsUnknown ? "Unbekannt" : $"PTID {PlaythroughKey[..Math.Min(8, PlaythroughKey.Length)]}";
+                return IsUnknown ? CoreText.Get("LABEL_UNKNOWN") : $"PTID {PlaythroughKey[..Math.Min(8, PlaythroughKey.Length)]}";
             }
 
             var lifePath = meta.LifePath ?? "?";
             var gender = meta.BodyGender ?? "?";
-            var level = meta.Level.HasValue ? $"Lvl {meta.Level.Value:0}" : "Lvl ?";
+            var level = CoreText.Get("LABEL_LEVEL", meta.Level.HasValue ? meta.Level.Value.ToString("0") : "?");
             return $"{lifePath} / {gender} / {level}";
         }
     }

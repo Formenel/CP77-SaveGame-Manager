@@ -1,7 +1,6 @@
 {
   "LANG": "English",
   "STRINGS": {
-    "APP_TITLE": "CP77 Save Manager ({0})",
     "BTN_RELOAD": "Reload",
     "BTN_SETTINGS": "Settings...",
     "BTN_CLEANUP_ALL": "Clean up (all characters)...",
@@ -30,6 +29,8 @@
     "MENU_STORE_ITEM": "Store (move to storage dir)",
     "MENU_RESTORE_ITEM": "Restore (back to save dir)",
     "MENU_DELETE_ITEM": "Delete...",
+    "MENU_SELECT_ALL": "Select all",
+    "MENU_SELECT_ALL_SHORTCUT": "Ctrl+A",
 
     "PREVIEW_MULTI_SELECTED": "{0} saves selected\r\nTotal size: {1}",
     "PREVIEW_FOLDER": "Folder: {0}",
@@ -97,6 +98,37 @@
     "SETTINGS_KEEP_LABEL": "Total to keep (mixed count):",
     "BTN_SAVE": "Save",
 
-    "BTN_OK": "OK"
+    "BTN_OK": "OK",
+    "BTN_YES": "Yes",
+    "BTN_NO": "No",
+    "MENU_FILE": "File",
+    "MENU_EXIT": "Exit",
+    "MENU_SAVES": "Saves",
+    "MENU_CHARACTER": "Character",
+    "MENU_HELP": "?",
+    "MENU_ABOUT": "About...",
+    "DLG_ABOUT_TITLE": "About",
+    "ABOUT_DESCRIPTION": "Manages Cyberpunk 2077 saves per character: store/restore, clean up, archive.",
+    "BTN_STORE": "Store",
+    "BTN_RESTORE": "Restore",
+    "SHORTCUT_RELOAD": "F5",
+    "SHORTCUT_RENAME": "F2",
+
+    "LABEL_UNKNOWN": "Unknown",
+    "LABEL_LEVEL": "Lvl {0}",
+    "CLEANUP_REASON": "older than the {0} newest of [{1}] (counted together)",
+    "ERR_SOURCE_MISSING": "Source folder does not exist: {0}",
+    "ERR_DEST_EXISTS": "Destination folder already exists: {0}",
+    "ERR_NOT_FLAT_SAVE": "\"{0}\" contains subfolders or links and is not moved for safety reasons.",
+    "ERR_DEST_INSIDE_SOURCE": "Destination is inside the source folder: {0}",
+    "ERR_VERIFY_FAILED": "Verification failed for file: {0}",
+    "ERR_OUTSIDE_ROOTS": "Safety stop: path is outside the managed folders (or behind a link): {0}",
+    "ERR_DIR_EMPTY": "Save dir and storage dir must not be empty.",
+    "ERR_DIR_NOT_ABSOLUTE": "Save dir and storage dir must be full paths (e.g. D:\\Saves).",
+    "ERR_DIR_DRIVE_ROOT": "A drive root (e.g. D:\\) is not allowed.",
+    "ERR_DIR_SAME": "Save dir and storage dir must not be the same folder.",
+    "ERR_DIR_NESTED": "Save dir and storage dir must not be inside each other.",
+    "DLG_INVALID_DIRS_TITLE": "Invalid folders",
+    "STATUS_INVALID_DIRS": "Invalid folder configuration: {0} Please fix it under \"Settings...\"."
   }
 }

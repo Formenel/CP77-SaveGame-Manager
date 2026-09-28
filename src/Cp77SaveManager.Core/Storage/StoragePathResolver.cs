@@ -26,7 +26,13 @@ public sealed class StoragePathResolver
             ? UnknownPlaythroughFolderName
             : save.PlaythroughKey;
 
-        return Path.Combine(storageDir, ptidFolder);
+        var result = Path.Combine(storageDir, ptidFolder);
+
+        // Defense in depth (S1): PlaythroughKey is already validated in
+        // SaveEntry, but never let a storage path escape storageDir.
+        return PathSafety.IsStrictlyUnder(result, storageDir)
+            ? result
+            : Path.Combine(storageDir, UnknownPlaythroughFolderName);
     }
 
     /// <summary>

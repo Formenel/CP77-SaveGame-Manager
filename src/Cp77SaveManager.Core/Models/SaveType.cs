@@ -21,10 +21,11 @@ public static class SaveTypeExtensions
 {
     /// <summary>
     /// Default set of types the cleanup rule applies to out of the box.
-    /// Werner's choice: Auto + Manual are cleaned up by default; QuickSave,
+    /// Werner's choice: Quick + Manual are cleaned up by default; AutoSave,
     /// EndGameSave and PointOfNoReturnSave are left alone unless the user
-    /// opts them in explicitly.
+    /// opts them in explicitly. Only affects a fresh config - an existing
+    /// config.json keeps its own selectedTypes.
     /// </summary>
     public static readonly IReadOnlySet<SaveType> DefaultCleanupSelection =
-        new HashSet<SaveType> { SaveType.AutoSave, SaveType.ManualSave };
+        new HashSet<SaveType> { SaveType.QuickSave, SaveType.ManualSave };
 }

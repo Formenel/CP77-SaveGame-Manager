@@ -1,6 +1,7 @@
 using Cp77SaveManager.Core.Configuration;
 using Cp77SaveManager.Core.Localization;
 using Cp77SaveManager.Core.Models;
+using Cp77SaveManager.Core.Storage;
 
 namespace Cp77SaveManager.App;
 
@@ -70,7 +71,18 @@ internal sealed class SettingsForm : Form
         var cancel = new Button { Text = t.Get("BTN_CANCEL"), DialogResult = DialogResult.Cancel, Left = 362, Width = 85, Top = 305 };
         AcceptButton = ok;
         CancelButton = cancel;
-        ok.Click += (_, _) => ApplyToResult();
+        ok.Click += (_, _) =>
+        {
+            // S4: refuse empty/identical/nested folders before anything gets scanned or moved.
+            var error = PathSafety.ValidateRoots(_saveDirBox.Text, _storageDirBox.Text);
+            if (error is not null)
+            {
+                MessageBox.Show(this, t.Get(error), t.Get("DLG_INVALID_DIRS_TITLE"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                DialogResult = DialogResult.None; // keep the dialog open
+                return;
+            }
+            ApplyToResult();
+        };
 
         Controls.AddRange(new Control[]
         {

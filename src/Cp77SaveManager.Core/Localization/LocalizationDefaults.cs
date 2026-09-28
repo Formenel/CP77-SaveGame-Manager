@@ -20,7 +20,6 @@ public static class LocalizationDefaults
     public static IReadOnlyDictionary<string, string> Strings { get; } = new Dictionary<string, string>
     {
         // Window / toolbar
-        ["APP_TITLE"] = "CP77 Save Manager ({0})",
         ["BTN_RELOAD"] = "Neu laden",
         ["BTN_SETTINGS"] = "Einstellungen...",
         ["BTN_CLEANUP_ALL"] = "Ausräumen (alle Charaktere)...",
@@ -54,6 +53,8 @@ public static class LocalizationDefaults
         ["MENU_STORE_ITEM"] = "Storen (ins Storage-Dir verschieben)",
         ["MENU_RESTORE_ITEM"] = "Restoren (zurück ins Save-Dir)",
         ["MENU_DELETE_ITEM"] = "Löschen...",
+        ["MENU_SELECT_ALL"] = "Alles auswählen",
+        ["MENU_SELECT_ALL_SHORTCUT"] = "Strg+A",
 
         // Preview pane
         ["PREVIEW_MULTI_SELECTED"] = "{0} Saves ausgewählt\r\nGesamtgröße: {1}",
@@ -130,5 +131,39 @@ public static class LocalizationDefaults
 
         // Generic OK button (nickname/settings dialogs)
         ["BTN_OK"] = "OK",
+        ["BTN_YES"] = "Ja",
+        ["BTN_NO"] = "Nein",
+
+        // 0.3.0: menu bar (Datei / Saves / Charakter / Extras / ?), toolbar, About
+        ["MENU_FILE"] = "Datei",
+        ["MENU_EXIT"] = "Beenden",
+        ["MENU_SAVES"] = "Saves",
+        ["MENU_CHARACTER"] = "Charakter",
+        ["MENU_HELP"] = "?",
+        ["MENU_ABOUT"] = "Info...",
+        ["DLG_ABOUT_TITLE"] = "Info",
+        ["ABOUT_DESCRIPTION"] = "Verwaltet Cyberpunk-2077-Spielstände nach Charakter: ein-/auslagern, ausräumen, archivieren.",
+        ["BTN_STORE"] = "Storen",
+        ["BTN_RESTORE"] = "Restoren",
+        ["SHORTCUT_RELOAD"] = "F5",
+        ["SHORTCUT_RENAME"] = "F2",
+
+        // 0.3.0: texts produced in Core (labels, cleanup reason, errors) + folder validation
+        ["LABEL_UNKNOWN"] = "Unbekannt",
+        ["LABEL_LEVEL"] = "Lvl {0}",
+        ["CLEANUP_REASON"] = "älter als die {0} neuesten von [{1}] (gemischt gezählt)",
+        ["ERR_SOURCE_MISSING"] = "Quellordner existiert nicht: {0}",
+        ["ERR_DEST_EXISTS"] = "Zielordner existiert bereits: {0}",
+        ["ERR_NOT_FLAT_SAVE"] = "\"{0}\" enthält Unterordner oder Verknüpfungen und wird aus Sicherheitsgründen nicht verschoben.",
+        ["ERR_DEST_INSIDE_SOURCE"] = "Ziel liegt innerhalb des Quellordners: {0}",
+        ["ERR_VERIFY_FAILED"] = "Verifikation fehlgeschlagen für Datei: {0}",
+        ["ERR_OUTSIDE_ROOTS"] = "Sicherheitsabbruch: Pfad liegt außerhalb der verwalteten Ordner (oder hinter einer Verknüpfung): {0}",
+        ["ERR_DIR_EMPTY"] = "Save-Dir und Storage-Dir dürfen nicht leer sein.",
+        ["ERR_DIR_NOT_ABSOLUTE"] = "Save-Dir und Storage-Dir müssen vollständige Pfade sein (z.B. D:\\Saves).",
+        ["ERR_DIR_DRIVE_ROOT"] = "Ein Laufwerks-Stammverzeichnis (z.B. D:\\) ist nicht erlaubt.",
+        ["ERR_DIR_SAME"] = "Save-Dir und Storage-Dir dürfen nicht identisch sein.",
+        ["ERR_DIR_NESTED"] = "Save-Dir und Storage-Dir dürfen nicht ineinander liegen.",
+        ["DLG_INVALID_DIRS_TITLE"] = "Ungültige Ordner",
+        ["STATUS_INVALID_DIRS"] = "Ordner-Konfiguration ungültig: {0} Bitte unter \"Einstellungen...\" korrigieren.",
     };
 }
